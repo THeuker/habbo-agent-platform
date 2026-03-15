@@ -68,6 +68,8 @@ if [ ! -f /app/nitro-assets/gamedata/Exter_exts_override.json ]; then
   echo "{}" > /app/nitro-assets/gamedata/Exter_exts_override.json
 fi
 
+# Always expose SWF/c_images endpoints on :8081, even when asset conversion is skipped.
+supervisorctl start swf-http-server || true
 supervisorctl start assets-http-server
 supervisorctl start nitro-dev-server
 
