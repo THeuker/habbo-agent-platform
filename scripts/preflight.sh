@@ -204,10 +204,10 @@ fi
 HABBO_OWNER_OR_ORG="${HABBO_OWNER_OR_ORG:-}"
 HABBO_GAME_PORT="${HABBO_GAME_PORT:-3000}"
 HABBO_RCON_PORT="${HABBO_RCON_PORT:-3001}"
-HABBO_WS_PORT="${HABBO_WS_PORT:-2096}"
-HABBO_NITRO_PORT="${HABBO_NITRO_PORT:-1080}"
-HABBO_ASSETS_PUBLIC_PORT="${HABBO_ASSETS_PUBLIC_PORT:-8080}"
-HABBO_SWF_PUBLIC_PORT="${HABBO_SWF_PUBLIC_PORT:-8081}"
+HABBO_WS_BIND_PORT="${HABBO_WS_BIND_PORT:-2096}"
+HABBO_NITRO_BIND_PORT="${HABBO_NITRO_BIND_PORT:-1080}"
+HABBO_ASSETS_BIND_PORT="${HABBO_ASSETS_BIND_PORT:-8080}"
+HABBO_SWF_BIND_PORT="${HABBO_SWF_BIND_PORT:-8081}"
 HABBO_DB_PORT="${HABBO_DB_PORT:-13306}"
 HABBO_DOCKER_SUBNET="${HABBO_DOCKER_SUBNET:-172.28.0.0/16}"
 
@@ -234,10 +234,10 @@ else
 fi
 
 check_port "game" "0.0.0.0" "$HABBO_GAME_PORT" fail arcturus
-check_port "nitro" "0.0.0.0" "$HABBO_NITRO_PORT" fail nitro
-check_port "websocket" "0.0.0.0" "$HABBO_WS_PORT" fail arcturus
-check_port "assets" "0.0.0.0" "$HABBO_ASSETS_PUBLIC_PORT" fail nitro
-check_port "swf" "0.0.0.0" "$HABBO_SWF_PUBLIC_PORT" fail nitro
+check_port "nitro" "0.0.0.0" "$HABBO_NITRO_BIND_PORT" fail nitro
+check_port "websocket" "0.0.0.0" "$HABBO_WS_BIND_PORT" fail arcturus
+check_port "assets" "0.0.0.0" "$HABBO_ASSETS_BIND_PORT" fail nitro
+check_port "swf" "0.0.0.0" "$HABBO_SWF_BIND_PORT" fail nitro
 check_port "rcon-local-bind" "127.0.0.1" "$HABBO_RCON_PORT" fail arcturus
 check_port "mysql-local-bind" "127.0.0.1" "$HABBO_DB_PORT" fail mysql
 

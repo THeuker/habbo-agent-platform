@@ -108,21 +108,33 @@ write_registry_env() {
   local habbo_owner_or_org="$1"
   local habbo_public_host="$2"
   local habbo_public_protocol="$3"
-  local habbo_nitro_port="$4"
-  local habbo_game_port="$5"
-  local habbo_rcon_port="$6"
-  local habbo_db_port="$7"
-  local habbo_docker_subnet="$8"
-  local habbo_portal_port="$9"
-  local habbo_portal_base_url="${10}"
-  local habbo_portal_jwt_secret="${11}"
-  local habbo_portal_cookie_secure="${12}"
+  local habbo_nitro_bind_port="$4"
+  local habbo_assets_bind_port="$5"
+  local habbo_swf_bind_port="$6"
+  local habbo_ws_bind_port="$7"
+  local habbo_assets_public_port="$8"
+  local habbo_swf_public_port="$9"
+  local habbo_ws_public_port="${10}"
+  local habbo_game_port="${11}"
+  local habbo_rcon_port="${12}"
+  local habbo_db_port="${13}"
+  local habbo_docker_subnet="${14}"
+  local habbo_portal_port="${15}"
+  local habbo_portal_base_url="${16}"
+  local habbo_portal_jwt_secret="${17}"
+  local habbo_portal_cookie_secure="${18}"
 
   cat > "$REGISTRY_ENV_FILE" <<EOF
 HABBO_OWNER_OR_ORG=$habbo_owner_or_org
 HABBO_PUBLIC_HOST=$habbo_public_host
 HABBO_PUBLIC_PROTOCOL=$habbo_public_protocol
-HABBO_NITRO_PORT=$habbo_nitro_port
+HABBO_NITRO_BIND_PORT=$habbo_nitro_bind_port
+HABBO_ASSETS_BIND_PORT=$habbo_assets_bind_port
+HABBO_SWF_BIND_PORT=$habbo_swf_bind_port
+HABBO_WS_BIND_PORT=$habbo_ws_bind_port
+HABBO_ASSETS_PUBLIC_PORT=$habbo_assets_public_port
+HABBO_SWF_PUBLIC_PORT=$habbo_swf_public_port
+HABBO_WS_PUBLIC_PORT=$habbo_ws_public_port
 HABBO_GAME_PORT=$habbo_game_port
 HABBO_RCON_PORT=$habbo_rcon_port
 HABBO_DB_PORT=$habbo_db_port
@@ -261,7 +273,7 @@ if [ -z "$MCP_API_KEY_DEFAULT" ] || [ "$MCP_API_KEY_DEFAULT" = "change-me-to-a-s
   MCP_API_KEY_DEFAULT="$(generate_api_key)"
 fi
 MCP_API_KEY="$(prompt "MCP API key" "$MCP_API_KEY_DEFAULT")"
-HABBO_BASE_URL="$(prompt "Habbo base URL" "${HABBO_BASE_URL:-http://127.0.0.1:1080}")"
+HABBO_BASE_URL="$(prompt "Habbo base URL" "${HABBO_BASE_URL:-http://127.0.0.1:${HABBO_NITRO_BIND_PORT:-1080}}")"
 
 case "$SETUP_MODE" in
   1)
@@ -269,13 +281,19 @@ case "$SETUP_MODE" in
     HABBO_OWNER_OR_ORG="$(prompt "GHCR owner/org for images" "${HABBO_OWNER_OR_ORG:-tndejong}")"
     HABBO_PUBLIC_HOST="$(prompt "Public host for Nitro" "${HABBO_PUBLIC_HOST:-127.0.0.1}")"
     HABBO_PUBLIC_PROTOCOL="$(prompt "Public protocol (http/https)" "${HABBO_PUBLIC_PROTOCOL:-http}")"
-    HABBO_NITRO_PORT="$(prompt "Host port for Nitro web" "${HABBO_NITRO_PORT:-1080}")"
+    HABBO_NITRO_BIND_PORT="$(prompt "Host bind port for Nitro web" "${HABBO_NITRO_BIND_PORT:-1080}")"
+    HABBO_ASSETS_BIND_PORT="$(prompt "Host bind port for Nitro assets" "${HABBO_ASSETS_BIND_PORT:-8080}")"
+    HABBO_SWF_BIND_PORT="$(prompt "Host bind port for Nitro SWF" "${HABBO_SWF_BIND_PORT:-8081}")"
+    HABBO_WS_BIND_PORT="$(prompt "Host bind port for websocket" "${HABBO_WS_BIND_PORT:-2096}")"
+    HABBO_ASSETS_PUBLIC_PORT="$(prompt "Public HTTPS/HTTP port for assets URLs" "${HABBO_ASSETS_PUBLIC_PORT:-$HABBO_ASSETS_BIND_PORT}")"
+    HABBO_SWF_PUBLIC_PORT="$(prompt "Public HTTPS/HTTP port for SWF URLs" "${HABBO_SWF_PUBLIC_PORT:-$HABBO_SWF_BIND_PORT}")"
+    HABBO_WS_PUBLIC_PORT="$(prompt "Public WS/WSS port for websocket URL" "${HABBO_WS_PUBLIC_PORT:-$HABBO_WS_BIND_PORT}")"
     HABBO_GAME_PORT="$(prompt "Host port for Arcturus game" "${HABBO_GAME_PORT:-3000}")"
     HABBO_RCON_PORT="$(prompt "Host port for RCON" "${HABBO_RCON_PORT:-3001}")"
     HABBO_DB_PORT="$(prompt "Host port for MySQL" "${HABBO_DB_PORT:-13306}")"
     HABBO_DOCKER_SUBNET="$(prompt "Docker subnet" "${HABBO_DOCKER_SUBNET:-172.28.0.0/16}")"
     HABBO_PORTAL_PORT="$(prompt "Host port for Agent Portal" "${HABBO_PORTAL_PORT:-3090}")"
-    HABBO_PORTAL_BASE_URL="$(prompt "Portal base hotel URL" "${HABBO_PORTAL_BASE_URL:-http://127.0.0.1:${HABBO_NITRO_PORT}}")"
+    HABBO_PORTAL_BASE_URL="$(prompt "Portal base hotel URL" "${HABBO_PORTAL_BASE_URL:-http://127.0.0.1:${HABBO_NITRO_BIND_PORT}}")"
     HABBO_PORTAL_JWT_SECRET="$(prompt "Portal JWT secret" "${HABBO_PORTAL_JWT_SECRET:-change-this-in-production}")"
     HABBO_PORTAL_COOKIE_SECURE="$(prompt "Portal secure cookie (true/false)" "${HABBO_PORTAL_COOKIE_SECURE:-false}")"
 
@@ -284,7 +302,13 @@ case "$SETUP_MODE" in
       "$HABBO_OWNER_OR_ORG" \
       "$HABBO_PUBLIC_HOST" \
       "$HABBO_PUBLIC_PROTOCOL" \
-      "$HABBO_NITRO_PORT" \
+      "$HABBO_NITRO_BIND_PORT" \
+      "$HABBO_ASSETS_BIND_PORT" \
+      "$HABBO_SWF_BIND_PORT" \
+      "$HABBO_WS_BIND_PORT" \
+      "$HABBO_ASSETS_PUBLIC_PORT" \
+      "$HABBO_SWF_PUBLIC_PORT" \
+      "$HABBO_WS_PUBLIC_PORT" \
       "$HABBO_GAME_PORT" \
       "$HABBO_RCON_PORT" \
       "$HABBO_DB_PORT" \

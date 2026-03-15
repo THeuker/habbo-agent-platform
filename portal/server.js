@@ -18,6 +18,11 @@ const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const HABBO_BASE_URL = process.env.HABBO_BASE_URL || 'http://127.0.0.1:1080';
 const HABBO_HEALTHCHECK_URL = process.env.HABBO_HEALTHCHECK_URL || HABBO_BASE_URL;
 const JWT_SECRET = process.env.PORTAL_JWT_SECRET || 'change-this-in-production';
+const PORTAL_BOOTSTRAP_ENABLED = process.env.PORTAL_BOOTSTRAP_ENABLED === 'true';
+const PORTAL_BOOTSTRAP_EMAIL = (process.env.PORTAL_BOOTSTRAP_EMAIL || 'systemaccount@hotel.local').trim().toLowerCase();
+const PORTAL_BOOTSTRAP_USERNAME = (process.env.PORTAL_BOOTSTRAP_USERNAME || 'Systemaccount').trim();
+const PORTAL_BOOTSTRAP_PASSWORD = process.env.PORTAL_BOOTSTRAP_PASSWORD || '';
+const PORTAL_BOOTSTRAP_HABBO_USERNAME = (process.env.PORTAL_BOOTSTRAP_HABBO_USERNAME || 'Systemaccount').trim();
 
 const db = mysql.createPool({
   host: process.env.DB_HOST || 'mysql',
@@ -107,6 +112,45 @@ async function ensurePortalSchema() {
       UNIQUE KEY uq_portal_habbo_user_id (habbo_user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+}
+
+async function ensureBootstrapPortalUser() {
+  if (!PORTAL_BOOTSTRAP_ENABLED) return;
+
+  if (!PORTAL_BOOTSTRAP_PASSWORD || PORTAL_BOOTSTRAP_PASSWORD.length < 8) {
+    console.warn('portal bootstrap enabled but PORTAL_BOOTSTRAP_PASSWORD is missing/too short; skipping bootstrap user');
+    return;
+  }
+  if (!PORTAL_BOOTSTRAP_EMAIL || !PORTAL_BOOTSTRAP_USERNAME || !PORTAL_BOOTSTRAP_HABBO_USERNAME) {
+    console.warn('portal bootstrap enabled but email/username/habbo username is missing; skipping bootstrap user');
+    return;
+  }
+
+  const [habboRows] = await db.execute(
+    'SELECT id, username FROM users WHERE username = ? LIMIT 1',
+    [PORTAL_BOOTSTRAP_HABBO_USERNAME]
+  );
+  const habboUser = habboRows[0];
+  if (!habboUser) {
+    console.warn(`portal bootstrap skipped; Habbo user '${PORTAL_BOOTSTRAP_HABBO_USERNAME}' was not found`);
+    return;
+  }
+
+  const [existingRows] = await db.execute(
+    'SELECT id FROM portal_users WHERE habbo_user_id = ? OR email = ? OR username = ? LIMIT 1',
+    [habboUser.id, PORTAL_BOOTSTRAP_EMAIL, PORTAL_BOOTSTRAP_USERNAME]
+  );
+  if (existingRows.length > 0) {
+    console.log('portal bootstrap user already exists; skipping');
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(PORTAL_BOOTSTRAP_PASSWORD, 12);
+  await db.execute(
+    'INSERT INTO portal_users (email, username, password_hash, habbo_user_id, habbo_username) VALUES (?, ?, ?, ?, ?)',
+    [PORTAL_BOOTSTRAP_EMAIL, PORTAL_BOOTSTRAP_USERNAME, passwordHash, habboUser.id, habboUser.username]
+  );
+  console.log(`portal bootstrap user created for Habbo '${habboUser.username}'`);
 }
 
 async function createHabboUser(username) {
@@ -277,6 +321,7 @@ app.get('*', (_req, res) => {
 });
 
 ensurePortalSchema()
+  .then(ensureBootstrapPortalUser)
   .then(() => {
     app.listen(PORT, () => {
       console.log(`agent-hotel-portal listening on :${PORT}`);

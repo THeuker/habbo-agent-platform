@@ -156,7 +156,13 @@ Tip: `just setup` (mode 1) can generate this file for you automatically.
 Optional but useful:
 
 ```bash
-HABBO_NITRO_PORT=1080
+HABBO_NITRO_BIND_PORT=1080
+HABBO_ASSETS_BIND_PORT=8080
+HABBO_SWF_BIND_PORT=8081
+HABBO_WS_BIND_PORT=2096
+HABBO_ASSETS_PUBLIC_PORT=8080
+HABBO_SWF_PUBLIC_PORT=8081
+HABBO_WS_PUBLIC_PORT=2096
 HABBO_GAME_PORT=3000
 HABBO_RCON_PORT=3001
 HABBO_DB_PORT=13306
@@ -223,9 +229,15 @@ HABBO_PORTAL_PORT=3090
 HABBO_PORTAL_BASE_URL=http://127.0.0.1:1080
 HABBO_PORTAL_JWT_SECRET=change-this-in-production
 HABBO_PORTAL_COOKIE_SECURE=false
+HABBO_PORTAL_BOOTSTRAP_ENABLED=true
+HABBO_PORTAL_BOOTSTRAP_EMAIL=systemaccount@hotel.local
+HABBO_PORTAL_BOOTSTRAP_USERNAME=Systemaccount
+HABBO_PORTAL_BOOTSTRAP_PASSWORD=ChangeMeNow123!
+HABBO_PORTAL_BOOTSTRAP_HABBO_USERNAME=Systemaccount
 ```
 
 For production, set a strong `HABBO_PORTAL_JWT_SECRET` and use `HABBO_PORTAL_COOKIE_SECURE=true` behind HTTPS.
+Also change `HABBO_PORTAL_BOOTSTRAP_PASSWORD` after first login.
 
 ---
 
@@ -347,7 +359,8 @@ If all four pass, your stack + MCP connection is healthy.
    - `HABBO_OWNER_OR_ORG=tndejong`
    - `HABBO_PUBLIC_HOST=<your-domain-or-ip>`
    - `HABBO_PUBLIC_PROTOCOL=http` (or `https` behind a proxy)
-   - Optional custom ports/subnet if needed
+   - Set bind ports with `HABBO_*_BIND_PORT` to avoid host conflicts
+   - Set URL ports with `HABBO_ASSETS_PUBLIC_PORT` / `HABBO_SWF_PUBLIC_PORT` / `HABBO_WS_PUBLIC_PORT` for renderer URLs
 4. Deploy Stack.
 
 If you redeploy/update the stack, your MySQL data stays intact as long as the named volume is kept and not removed.
@@ -377,7 +390,12 @@ If you run NPM, you can proxy Nitro by joining this stack to the same external D
 3. Set:
    - `HABBO_PUBLIC_HOST=<your-domain>`
    - `HABBO_PUBLIC_PROTOCOL=https`
+   - `HABBO_ASSETS_PUBLIC_PORT=443`
+   - `HABBO_SWF_PUBLIC_PORT=443`
+   - `HABBO_WS_PUBLIC_PORT=443`
    - Optional `HABBO_WS_PUBLIC_PROTOCOL=wss`
+
+When running behind NPM/Traefik/Caddy, keep host bind ports non-443 (for example `HABBO_NITRO_BIND_PORT=11080`, `HABBO_ASSETS_BIND_PORT=18080`, `HABBO_SWF_BIND_PORT=18081`, `HABBO_WS_BIND_PORT=12096`) and keep the public URL ports at `443`.
 
 Compose network example:
 
