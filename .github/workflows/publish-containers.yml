@@ -54,6 +54,8 @@ jobs:
           file: ./emulator/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=habbo-arcturus
+          cache-to: type=gha,mode=max,scope=habbo-arcturus
           tags: ${{ steps.meta_arcturus.outputs.tags }}
           labels: ${{ steps.meta_arcturus.outputs.labels }}
 
@@ -74,5 +76,7 @@ jobs:
           file: ./nitro/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=habbo-nitro
+          cache-to: type=gha,mode=max,scope=habbo-nitro
           tags: ${{ steps.meta_nitro.outputs.tags }}
           labels: ${{ steps.meta_nitro.outputs.labels }}
