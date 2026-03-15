@@ -8,8 +8,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_ARCTURUS: ${{ github.repository_owner }}/habbo-arcturus
-  IMAGE_NITRO: ${{ github.repository_owner }}/habbo-nitro
 
 jobs:
   publish:
@@ -22,6 +20,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Normalize image owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -37,7 +38,7 @@ jobs:
         id: meta_arcturus
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_ARCTURUS }}
+          images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/habbo-arcturus
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
@@ -46,8 +47,8 @@ jobs:
       - name: Build and push arcturus image
         uses: docker/build-push-action@v6
         with:
-          context: ./emulator/emulator
-          file: ./emulator/emulator/Dockerfile
+          context: ./emulator
+          file: ./emulator/Dockerfile
           push: true
           tags: ${{ steps.meta_arcturus.outputs.tags }}
           labels: ${{ steps.meta_arcturus.outputs.labels }}
@@ -56,7 +57,7 @@ jobs:
         id: meta_nitro
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NITRO }}
+          images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/habbo-nitro
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
@@ -65,8 +66,8 @@ jobs:
       - name: Build and push nitro image
         uses: docker/build-push-action@v6
         with:
-          context: ./emulator/nitro
-          file: ./emulator/nitro/Dockerfile
+          context: ./nitro
+          file: ./nitro/Dockerfile
           push: true
           tags: ${{ steps.meta_nitro.outputs.tags }}
           labels: ${{ steps.meta_nitro.outputs.labels }}
