@@ -1,4 +1,4 @@
-# Habbo Agent Emulator
+# Habbo Agent Platform
 
 A fully self-hosted Habbo Hotel with a Claude Code MCP bridge — so your AI agents can walk into the hotel, spawn new avatars, chat with guests, teleport between rooms, and run experiments in a live virtual world.
 
@@ -6,7 +6,33 @@ Built on **Arcturus Morningstar** (Java) + **Nitro React** (TypeScript), extende
 
 ---
 
-## What Claude can do
+## Table of Contents
+
+- [About](#about)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Quick Start with Docker](#quick-start-with-docker)
+- [Deploy with Portainer (Easy Mode)](#deploy-with-portainer-easy-mode)
+- [Nginx Proxy Manager + Custom Domain](#nginx-proxy-manager--custom-domain)
+- [Usage Examples](#usage-examples)
+- [Hotel Management Commands](#hotel-management-commands)
+- [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
+- [Project Structure](#project-structure)
+- [Credits](#credits)
+
+---
+
+## About
+
+`habbo-agent-platform` lets you run a self-hosted Habbo hotel and control it through MCP tools from Claude Code.
+It is optimized for quick deployment using Docker or Portainer with prebuilt GHCR images.
+
+---
+
+## Features
+
+### MCP tools (what Claude can do)
 
 | Tool | What it does | Requires player online? |
 |------|-------------|------------------------|
@@ -25,12 +51,12 @@ Built on **Arcturus Morningstar** (Java) + **Nitro React** (TypeScript), extende
 
 ## Prerequisites
 
-Install these before running setup:
+Install these before deploying or connecting MCP:
 
 | Tool | Why | Install |
 |------|-----|---------|
 | **Docker Desktop** | Runs the hotel (Java, MySQL, Nitro) | [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) |
-| **`just`** | Task runner for hotel commands | `brew install just` / `choco install just` |
+| **`just`** (optional) | Useful local helper commands (`just start-all`, `just watch-*`) | `brew install just` / `choco install just` |
 | **Node.js 18+** | Runs the MCP server | [nodejs.org](https://nodejs.org/) or `brew install node` |
 | **Claude Code** | The AI agent | `npm install -g @anthropic-ai/claude-code` |
 | **Anthropic API key** | Powers Claude | [console.anthropic.com](https://console.anthropic.com/) |
@@ -44,7 +70,7 @@ Install these before running setup:
 ## Quick start with Docker
 
 Use the prebuilt images from this repository's GitHub Container Registry package.
-No custom registry setup is required.
+No custom registry setup is required for normal usage.
 
 ### 1. Clone and go to the repo
 
@@ -226,10 +252,10 @@ The MCP server is a lightweight Node.js process that Claude Code launches automa
 Wait a few more minutes — the first Maven build is slow. Run `just watch-arcturus` and wait for the "Arcturus Morningstar is now ready" message.
 
 **`/mcp` doesn't show the habbo server in Claude Code?**
-Check that the `mcpServers` block is correctly merged into `~/.claude/settings.json` and the path to `index.ts` is absolute and correct.
+Check that the `mcpServers` block is correctly merged into `~/.claude/settings.json` and restart Cursor/Claude Code after changes.
 
 **RCON tools returning errors?**
-Make sure the hotel is fully started (see above). RCON only activates after the "ready" message. Also ensure `./setup.sh` ran successfully — it patches `rcon.allowed` in `config.ini`.
+Make sure the hotel is fully started (see above). RCON only activates after the "ready" message.
 
 **Arcturus crashes with missing SQL tables (for example `emulator_settings`)?**
 Arcturus startup now auto-bootstraps the database from the repository SQL dumps when seed tables are missing. If you are recovering an existing deployment manually, run:
@@ -246,16 +272,16 @@ docker exec arcturus supervisorctl start arcturus-emulator
 The username already exists in the database. Try a different name.
 
 **MCP server says `MCP_API_KEY` is required?**
-The `env` block in `~/.claude/settings.json` must include `MCP_API_KEY`. Re-run `./setup.sh` and copy the full printed snippet.
+The `env` block in `~/.claude/settings.json` must include `MCP_API_KEY`.
 
 ---
 
 ## Project structure
 
 ```
-habbo-agent-emulator/
-├── setup.sh              # First-time setup script
+habbo-agent-platform/
 ├── README.md             # This file
+├── docker-compose.registry.yaml
 ├── habbo-mcp/            # MCP server (TypeScript)
 │   ├── src/
 │   │   ├── index.ts      # Entry point
@@ -265,9 +291,9 @@ habbo-agent-emulator/
 │   │   └── tools/        # One file per MCP tool
 │   ├── .env.example      # Config template
 │   └── package.json
-└── emulator/             # Hotel (Docker Compose)
+└── emulator/             # Hotel (source build stack)
     ├── docker-compose.yaml
-    ├── justfile          # Task runner commands
+    ├── justfile
     ├── emulator/         # Arcturus Java server
     ├── nitro/            # Nitro React client
     └── mysql/            # MariaDB config + schema dumps
