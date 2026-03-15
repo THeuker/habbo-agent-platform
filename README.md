@@ -101,6 +101,7 @@ just start-all
 ```
 
 First run takes **5–10 minutes** — Maven builds the Java server and npm installs the React client.
+If Nitro assets are missing, startup also auto-extracts them on first boot, which can add extra time.
 
 ### 5. Open the hotel
 
@@ -157,12 +158,21 @@ Steps:
 3. Push to `main` (or manually trigger workflow).
 4. In GitHub Packages, set each container package visibility to **Public**.
 
-For Portainer, use `emulator/docker-compose.registry.yaml` and replace:
+For Portainer or local Docker, use `docker-compose.registry.yaml` and set:
 
-- `ghcr.io/OWNER_OR_ORG/habbo-arcturus:latest`
-- `ghcr.io/OWNER_OR_ORG/habbo-nitro:latest`
+- `HABBO_OWNER_OR_ORG` (for example: `tndejong`)
+- Optional: `HABBO_DOCKER_SUBNET` (defaults to `172.28.0.0/16` to avoid common subnet conflicts)
 
-with your actual GHCR image names.
+Example:
+
+```bash
+export HABBO_OWNER_OR_ORG=tndejong
+docker compose -f docker-compose.registry.yaml up -d
+```
+
+> Note: after `docker compose up -d`, containers can show as `Up` before the hotel is actually ready.
+> On first startup (or after a clean reset), Arcturus/Nitro may still download/install/build assets for several minutes.
+> Wait until logs indicate readiness before opening the hotel.
 
 ---
 
@@ -211,6 +221,8 @@ just shell-nitro         # SSH into the Nitro container
 just extract-nitro-assets # Convert SWF assets (first run only)
 just clean-docker        # Wipe everything and start fresh
 ```
+
+`just extract-nitro-assets` is usually no longer required manually, because startup now auto-extracts missing Nitro assets.
 
 ---
 

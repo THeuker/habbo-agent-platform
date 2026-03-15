@@ -1,12 +1,10 @@
-version: '3.7'
-
 volumes:
   volume-mysql:
 
 services:
   arcturus:
     container_name: arcturus
-    image: ghcr.io/OWNER_OR_ORG/habbo-arcturus:latest
+    image: ghcr.io/${HABBO_OWNER_OR_ORG}/habbo-arcturus:latest
     entrypoint: ["/bin/sh","/app/scripts/build.sh"]
     ports:
       - 3000:3000
@@ -19,7 +17,7 @@ services:
 
   nitro:
     container_name: nitro
-    image: ghcr.io/OWNER_OR_ORG/habbo-nitro:latest
+    image: ghcr.io/${HABBO_OWNER_OR_ORG}/habbo-nitro:latest
     entrypoint: ["/bin/sh","/app/scripts/build.sh"]
     ports:
       - 1080:5154
@@ -50,4 +48,4 @@ networks:
   nitro:
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        - subnet: ${HABBO_DOCKER_SUBNET:-172.28.0.0/16}
