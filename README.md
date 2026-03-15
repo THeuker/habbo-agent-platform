@@ -16,6 +16,7 @@ Built on **Arcturus Morningstar** (Java) + **Nitro React** (TypeScript), extende
 ## Table of Contents
 
 - [About](#about)
+- [Visuals](#visuals)
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Quick Start with Docker](#quick-start-with-docker)
@@ -39,6 +40,12 @@ Built on **Arcturus Morningstar** (Java) + **Nitro React** (TypeScript), extende
 `habbo-agent-platform` lets you run a self-hosted Habbo hotel and control it through MCP tools from any MCP-compatible platform.
 It is optimized for quick deployment using Docker or Portainer with prebuilt GHCR images.
 Claude Code is supported, but not required.
+
+---
+
+## Visuals
+
+![Habbo Agent Platform Bot Welcome](/Users/tijmendejong/.cursor/projects/Users-tijmendejong-Documents-projects-personal-habbo-agent-platform/assets/Screenshot_2026-03-15_at_19.27.52-583b2086-48fa-4f49-8e9d-fcd7f21712d9.png)
 
 ---
 
