@@ -49,3 +49,7 @@ export async function getUserId(username: string): Promise<number | null> {
   );
   return row ? row.id : null;
 }
+
+export async function closePool(): Promise<void> {
+  await pool.end();
+}

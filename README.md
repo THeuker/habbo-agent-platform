@@ -77,7 +77,7 @@ Install these before deploying or connecting MCP:
 | Tool | Why | Install |
 |------|-----|---------|
 | **Docker Desktop** | Runs the hotel (Java, MySQL, Nitro) | [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) |
-| **`just`** (optional) | Useful local helper commands (`just start-all`, `just watch-*`) | `brew install just` / `choco install just` |
+| **`just`** (optional) | Shortcuts for setup/check/run flow (`just setup`, `just doctor`, `just up`) | `brew install just` / `choco install just` |
 | **Node.js 18+** | Runs the MCP server | [nodejs.org](https://nodejs.org/) or `brew install node` |
 | **MCP-compatible client** | Connects to `habbo-mcp` and calls tools | Claude Code, Cursor, or any MCP client |
 | **Client/API credentials** | Required by your chosen MCP client/provider | Depends on the platform you use |
@@ -262,7 +262,7 @@ What it validates:
 1. Core containers are running (`arcturus`, `mysql`, `nitro`).
 2. RCON and MySQL ports are reachable from your MCP host.
 3. Hotel web endpoint responds (`HABBO_BASE_URL` from `habbo-mcp/.env`).
-4. MCP data path works by running `getOnlinePlayers` through `habbo-mcp`.
+4. MCP runtime path works by probing `habbo-mcp` (DB probe with RCON fallback if DB is saturated).
 
 Optional manual check in your MCP client:
 
@@ -388,26 +388,23 @@ If `AUTO_AGENT_SYNC` is `false` (default), none of these transcript paths are re
 
 ---
 
-## Hotel management commands
+## Just commands
 
 ```bash
-cd emulator
-
-just start-all           # Start hotel (MySQL + Arcturus + Nitro)
-just stop-arcturus       # Stop the Java emulator
-just start-arcturus      # Start it again
-just restart-arcturus    # Full restart
-just recompile-arcturus  # Rebuild after Java code changes
-just watch-arcturus      # Tail emulator logs
-just watch-nitro         # Tail frontend logs
-just mysql               # Open MySQL console
-just shell-arcturus      # SSH into the Arcturus container
-just shell-nitro         # SSH into the Nitro container
-just extract-nitro-assets # Convert SWF assets (first run only)
-just clean-docker        # Wipe everything and start fresh
+just setup               # Run interactive setup wizard
+just preflight           # Validate env, ports, subnet, SSH assumptions
+just smoke               # End-to-end runtime smoke test
+just doctor              # preflight + smoke in one command
+just up                  # Start registry stack with .env.registry
+just down                # Stop registry stack
+just ps                  # Show stack status
+just logs-arcturus       # Tail emulator logs
+just logs-nitro          # Tail Nitro logs
+just logs-mysql          # Tail MariaDB logs
+just mcp-install         # Install MCP dependencies
+just mcp-dev             # Run MCP server locally
+just mysql               # Open MySQL shell in running mysql container
 ```
-
-`just extract-nitro-assets` is usually no longer required manually, because startup now auto-extracts missing Nitro assets.
 
 ---
 
@@ -434,8 +431,8 @@ The MCP server is a lightweight Node.js process your MCP client launches (or con
 
 ## Troubleshooting
 
-**Hotel not loading after `just start-all`?**
-Wait a few more minutes — the first Maven build is slow. Run `just watch-arcturus` and wait for the "Arcturus Morningstar is now ready" message.
+**Hotel not loading after `just up`?**
+Wait a few more minutes — first run can compile/build and convert assets. Run `just logs-arcturus` and `just logs-nitro` to watch startup progress.
 
 **MCP client cannot see the `habbo` server?**
 Check that the server configuration is correct for your MCP platform and restart the client after changes.

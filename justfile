@@ -1,93 +1,61 @@
 set windows-powershell := true
 
+# Show all available recipes
 default:
   @just --list
 
-# Install all easily
-install:
-  git submodule init
-  git submodule update
+# Run interactive setup wizard
+setup:
+  bash setup.sh
 
-# Start Mysql, Arcturus Emulator & Nitro (not in daemon mod)
-start-all:
-  docker-compose up
+# Validate env, ports, and network assumptions
+preflight:
+  bash scripts/preflight.sh
 
-# Close docker containers, remove images and clean volumes
-clean-docker:
-  docker-compose down
-  docker image rm nitro-docker_arcturus -f
-  docker image rm nitro-docker_nitro -f
-  docker volume rm nitro-docker_volume-arcturus-maven-repo
-  docker volume rm nitro-docker_volume-arcturus-target
-  docker volume rm nitro-docker_volume-mysql
-  docker volume rm nitro-docker_volume-nitro-converter-node-modules
-  docker volume rm nitro-docker_volume-nitro-react-node-modules
+# Run end-to-end runtime smoke test
+smoke:
+  bash scripts/smoke-test.sh
 
-# Open the MySQL console
-mysql:
-  docker exec -it arcturus bash -c "mysql -h mysql -u arcturus_user -parcturus_pw arcturus"
+# Run preflight + smoke test in sequence
+doctor:
+  bash scripts/preflight.sh && bash scripts/smoke-test.sh
 
-# Restart Arcturus Emulator
-restart-arcturus:
-  docker exec arcturus supervisorctl restart arcturus-emulator
+# Start registry stack in background
+up:
+  docker compose --env-file .env.registry -f docker-compose.registry.yaml up -d
 
-# Stop Arcturus Emulator
-stop-arcturus:
-  docker exec arcturus supervisorctl stop arcturus-emulator
+# Stop and remove registry stack
+down:
+  docker compose --env-file .env.registry -f docker-compose.registry.yaml down
 
-# Start Arcturus Emulator
-start-arcturus:
-  docker exec arcturus supervisorctl start arcturus-emulator
+# Restart running services
+restart:
+  docker compose --env-file .env.registry -f docker-compose.registry.yaml restart
 
-# Recompile Arcturus Emulator
-recompile-arcturus:
-  docker exec arcturus supervisorctl stop arcturus-emulator
-  docker exec -it arcturus bash -c "cd /app/arcturus; mvn package; cp /app/config.ini /app/arcturus/target/config.ini;"
-  docker exec arcturus supervisorctl start arcturus-emulator
+# Show current service status
+ps:
+  docker compose --env-file .env.registry -f docker-compose.registry.yaml ps
 
-# Watch Arcturus's output
-watch-arcturus:
-  docker exec arcturus supervisorctl tail -f arcturus-emulator
+# Tail Arcturus logs
+logs-arcturus:
+  docker compose --env-file .env.registry -f docker-compose.registry.yaml logs -f arcturus
 
-# Enter in the Arcturus's shell:
-shell-arcturus:
-  docker exec -it arcturus bash
+# Tail Nitro logs
+logs-nitro:
+  docker compose --env-file .env.registry -f docker-compose.registry.yaml logs -f nitro
 
-# Restart Nitro dev server
-restart-nitro:
-  docker exec nitro supervisorctl stop nitro-dev-server
-  docker exec nitro bash -c "cp /app/configuration/nitro-react/public/* /app/nitro-react/public/"
-  docker exec nitro supervisorctl start nitro-dev-server
-
-# Stop Nitro Dev Server
-stop-nitro:
-  docker exec nitro supervisorctl stop nitro-dev-server
-
-# Start Nitro Dev Server
-start-nitro:
-  docker exec nitro supervisorctl start nitro-dev-server
-
-# Enter in the Nitro's shell
-shell-nitro:
-  docker exec -it nitro bash
-
-# Watch Nitro dev server's output
-watch-nitro:
-  docker exec nitro supervisorctl tail -f nitro-dev-server
-
+# Tail MySQL logs
+logs-mysql:
+  docker compose --env-file .env.registry -f docker-compose.registry.yaml logs -f mysql
 
 # Install MCP server dependencies
 mcp-install:
-  cd ../habbo-mcp && npm install
+  cd habbo-mcp && npm install
 
-# Test MCP server connection (runs standalone, Ctrl+C to stop)
+# Run MCP server locally (dev)
 mcp-dev:
-  cd ../habbo-mcp && npx tsx src/index.ts
+  cd habbo-mcp && npx tsx src/index.ts
 
-# Extract nitro assets from SWF
-extract-nitro-assets:
-  docker exec -it nitro bash -c "cp /app/configuration/nitro-converter/configuration.json /app/nitro-converter/configuration.json"
-  docker exec -it nitro bash -c "cd /app/nitro-converter; yarn ts-node-dev --transpile-only src/Main.ts"
-  docker exec -it nitro bash -c "echo 'Moving assets...'"
-  docker exec -it nitro bash -c "rsync -r /app/nitro-converter/assets/* /app/nitro-assets/"
-  docker exec -it nitro bash -c "echo 'Done !'"
+# Open MySQL shell in mysql container
+mysql:
+  docker exec -it mysql sh -lc "mysql -u arcturus_user -parcturus_pw arcturus"
