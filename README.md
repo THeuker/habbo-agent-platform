@@ -41,181 +41,99 @@ Install these before running setup:
 
 ---
 
-## Quick start (fresh install)
+## Quick start with Docker
 
-### 1. Clone
+Use the prebuilt images from this repository's GitHub Container Registry package.
+No custom registry setup is required.
 
-```bash
-git clone <repo-url>
-cd habbo-agent-emulator
-git submodule init && git submodule update
-```
-
-### 2. Run setup
+### 1. Clone and go to the repo
 
 ```bash
-chmod +x setup.sh
-./setup.sh
+git clone https://github.com/tndejong/habbo-agent-platform.git
+cd habbo-agent-platform
 ```
 
-The script will:
-- Check your prerequisites
-- Ask for an API key (or auto-generate one for you)
-- Write all config files automatically
-- Install MCP server dependencies
-- Print the exact Claude Code snippet to copy
+### 2. Create an env file (recommended)
 
-### 3. Add the MCP server to Claude Code
-
-Copy the `mcpServers` block printed by `setup.sh` into `~/.claude/settings.json`.
-
-If you already have other MCP servers, merge it into the existing object:
-
-```json
-{
-  "mcpServers": {
-    "habbo": {
-      "command": "npx",
-      "args": ["tsx", "/path/to/habbo-agent-emulator/habbo-mcp/src/index.ts"],
-      "env": {
-        "MCP_API_KEY": "your-generated-key",
-        "RCON_HOST": "127.0.0.1",
-        "RCON_PORT": "3001",
-        "DB_HOST": "127.0.0.1",
-        "DB_PORT": "13306",
-        "DB_NAME": "arcturus",
-        "DB_USER": "arcturus_user",
-        "DB_PASSWORD": "arcturus_pw",
-        "HABBO_BASE_URL": "http://127.0.0.1:1080"
-      }
-    }
-  }
-}
-```
-
-### 4. Start the hotel
+Create `.env.registry` in the repo root and set at least:
 
 ```bash
-cd emulator
-just start-all
+HABBO_OWNER_OR_ORG=tndejong
+HABBO_PUBLIC_HOST=127.0.0.1
+HABBO_PUBLIC_PROTOCOL=http
 ```
 
-First run takes **5–10 minutes** — Maven builds the Java server and npm installs the React client.
-If Nitro assets are missing, startup also auto-extracts them on first boot, which can add extra time.
+Optional but useful:
+
+```bash
+HABBO_NITRO_PORT=1080
+HABBO_GAME_PORT=3000
+HABBO_RCON_PORT=3001
+HABBO_DB_PORT=13306
+HABBO_DOCKER_SUBNET=172.28.0.0/16
+```
+
+### 3. Start the stack
+
+```bash
+docker compose --env-file .env.registry -f docker-compose.registry.yaml up -d
+```
+
+### 4. Wait for first boot
+
+First startup can take several minutes:
+- Arcturus compiles on first run
+- Nitro may auto-convert assets when missing
+- DB seed is auto-imported if required tables are missing
+
+Check status:
+
+```bash
+docker compose -f docker-compose.registry.yaml logs -f arcturus
+docker compose -f docker-compose.registry.yaml logs -f nitro
+```
 
 ### 5. Open the hotel
 
-Go to [http://127.0.0.1:1080?sso=123](http://127.0.0.1:1080?sso=123)
-
-### 6. Connect Claude Code
-
-Restart Claude Code and run `/mcp` — you should see `habbo` listed with MCP tools.
-
-### 7. Optional: enable transcript-to-hotel sync
-
-By default, automatic agent transcript sync is **disabled** for safer onboarding and lower CPU usage.
-
-Enable it only when you want transcript-driven bot mirroring:
-
-```bash
-# habbo-mcp/.env
-AUTO_AGENT_SYNC=true
-SYNC_FORWARD_USER_CHAT=true
-SYNC_POLL_MS=2000
-SYNC_DONE_IDLE_MS=4000
-```
-
-Then restart Claude Code so the MCP process reloads env values.
+[http://127.0.0.1:1080?sso=123](http://127.0.0.1:1080?sso=123)
 
 ---
 
-## Already running the hotel?
+## Deploy with Portainer (easy mode)
 
-If your emulator is already up in Docker, you only need to set up the MCP server:
+1. In Portainer, create a new Stack.
+2. Paste `docker-compose.registry.yaml`.
+3. Add environment variables in the Stack UI:
+   - `HABBO_OWNER_OR_ORG=tndejong`
+   - `HABBO_PUBLIC_HOST=<your-domain-or-ip>`
+   - `HABBO_PUBLIC_PROTOCOL=http` (or `https` behind a proxy)
+   - Optional custom ports/subnet if needed
+4. Deploy Stack.
 
-```bash
-# From the repo root:
-./setup.sh
-```
-
-Then copy the printed `mcpServers` snippet into `~/.claude/settings.json` and restart Claude Code. That's it — the MCP server runs on your host machine and connects to the already-running Docker containers via the mapped ports (RCON on `localhost:3001`, MySQL on `localhost:13306`).
-
-### Remote hotel via SSH tunnel (optional)
-
-If your hotel runs on a remote server and RCON/MySQL are bound to localhost on that server, the MCP can open an SSH tunnel automatically at startup.
-
-In `habbo-mcp/.env`, set:
-
-```bash
-SSH_TUNNEL_ENABLED=true
-SSH_TUNNEL_HOST=78.46.98.250
-SSH_TUNNEL_PORT=22
-SSH_TUNNEL_USER=root
-SSH_TUNNEL_KEY_PATH=~/.ssh/to/id_rsa # replace with ur ssh key of the server u running it on. 
-SSH_TUNNEL_LOCAL_RCON_PORT=43001
-SSH_TUNNEL_REMOTE_RCON_PORT=13001
-SSH_TUNNEL_LOCAL_DB_PORT=43306
-SSH_TUNNEL_REMOTE_DB_PORT=13306
-```
-
-When enabled, MCP automatically uses the local forwarded endpoints (`127.0.0.1:<local ports>`) for RCON and MySQL.
+If you redeploy/update the stack, your MySQL data stays intact as long as the named volume is kept and not removed.
 
 ---
 
-## Publish public container images (GHCR)
+## Nginx Proxy Manager + custom domain
 
-This repo includes a GitHub Actions workflow at `.github/workflows/publish-containers.yml` that builds and pushes:
+If you run NPM, you can proxy Nitro by joining this stack to the same external Docker network (for example `proxy_net`) and forwarding to `nitro:5154`.
 
-- `ghcr.io/<owner>/habbo-arcturus`
-- `ghcr.io/<owner>/habbo-nitro`
-
-It runs on push to `main`, on version tags (`v*`), or manually via **Run workflow**.
-
-Steps:
-
-1. Push this repo to GitHub (with submodules intact).
-2. Open **Settings → Actions → General** and allow actions.
-3. Push to `main` (or manually trigger workflow).
-4. In GitHub Packages, set each container package visibility to **Public**.
-
-For Portainer or local Docker, use `docker-compose.registry.yaml` and set:
-
-- `HABBO_OWNER_OR_ORG` (for example: `tndejong`)
-- Optional: `HABBO_DOCKER_SUBNET` (defaults to `172.28.0.0/16` to avoid common subnet conflicts)
-- Optional SQL bootstrap overrides:
-  - `HABBO_SQL_BASE_URL`
-  - `HABBO_SQL_BASE_FILE`
-  - `HABBO_SQL_MIGRATION_FILE`
-
-Example:
-
-```bash
-export HABBO_OWNER_OR_ORG=tndejong
-docker compose -f docker-compose.registry.yaml up -d
-```
-
-> Note: after `docker compose up -d`, containers can show as `Up` before the hotel is actually ready.
-> On first startup (or after a clean reset), Arcturus/Nitro may still download/install/build assets for several minutes.
-> Wait until logs indicate readiness before opening the hotel.
-> If MySQL dumps are not mounted in your environment (common in some Portainer setups), Arcturus now auto-downloads and imports the default SQL dumps from this repository when `emulator_settings` is missing.
-
-### Nginx Proxy Manager + custom domain
-
-If you use Nginx Proxy Manager (NPM), you can serve Nitro on your own domain by connecting this stack to a shared Docker network (for example `proxy_net`) and proxying directly to the `nitro` service.
-
-1. Create (or reuse) a Docker network used by NPM, for example `proxy_net`.
-2. Attach this stack to that external network.
-3. In NPM, create a proxy host for your domain and forward to:
-   - Hostname: `nitro`
-   - Port: `5154`
-4. Enable websocket support in NPM.
+1. Ensure both stacks share the same external network.
+2. In NPM Proxy Host:
+   - Domain: your domain
+   - Forward host: `nitro`
+   - Forward port: `5154`
+   - Enable websocket support
+3. Set:
+   - `HABBO_PUBLIC_HOST=<your-domain>`
+   - `HABBO_PUBLIC_PROTOCOL=https`
+   - Optional `HABBO_WS_PUBLIC_PROTOCOL=wss`
 
 Compose network example:
 
 ```yaml
 services:
   nitro:
-    # ...
     networks:
       - nitro
       - proxy_net
@@ -228,8 +146,6 @@ networks:
   proxy_net:
     external: true
 ```
-
-For domain-based URLs, set `HABBO_PUBLIC_HOST` (and `HABBO_PUBLIC_PROTOCOL=https` when using SSL).
 
 ---
 
