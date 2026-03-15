@@ -140,6 +140,26 @@ If your emulator is already up in Docker, you only need to set up the MCP server
 
 Then copy the printed `mcpServers` snippet into `~/.claude/settings.json` and restart Claude Code. That's it — the MCP server runs on your host machine and connects to the already-running Docker containers via the mapped ports (RCON on `localhost:3001`, MySQL on `localhost:13306`).
 
+### Remote hotel via SSH tunnel (optional)
+
+If your hotel runs on a remote server and RCON/MySQL are bound to localhost on that server, the MCP can open an SSH tunnel automatically at startup.
+
+In `habbo-mcp/.env`, set:
+
+```bash
+SSH_TUNNEL_ENABLED=true
+SSH_TUNNEL_HOST=78.46.98.250
+SSH_TUNNEL_PORT=22
+SSH_TUNNEL_USER=root
+SSH_TUNNEL_KEY_PATH=~/.ssh/to/id_rsa # replace with ur ssh key of the server u running it on. 
+SSH_TUNNEL_LOCAL_RCON_PORT=43001
+SSH_TUNNEL_REMOTE_RCON_PORT=13001
+SSH_TUNNEL_LOCAL_DB_PORT=43306
+SSH_TUNNEL_REMOTE_DB_PORT=13306
+```
+
+When enabled, MCP automatically uses the local forwarded endpoints (`127.0.0.1:<local ports>`) for RCON and MySQL.
+
 ---
 
 ## Publish public container images (GHCR)
