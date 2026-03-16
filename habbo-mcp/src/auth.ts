@@ -145,6 +145,15 @@ export function assertToolAllowed(principal: Principal, toolName: string): void 
   throw new Error(`Tool '${toolName}' is not allowed for your plan`);
 }
 
+export function canUseTool(principal: Principal, toolName: string): boolean {
+  try {
+    assertToolAllowed(principal, toolName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function markTokenUsed(tokenId: number | null): Promise<void> {
   if (!tokenId) return;
   await execute(

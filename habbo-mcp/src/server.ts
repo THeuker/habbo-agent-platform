@@ -8,6 +8,7 @@ import {
 import { z } from 'zod';
 import {
   assertToolAllowed,
+  canUseTool,
   extractApiToken,
   logToolCall,
   markTokenUsed,
@@ -1132,8 +1133,9 @@ export async function startHttpServer(): Promise<void> {
       }
 
       if (methodName === 'tools/list') {
-        await resolvePrincipal(suppliedToken, 'http');
-        json(res, 200, { jsonrpc: '2.0', id: requestId, result: { tools } });
+        const principal = await resolvePrincipal(suppliedToken, 'http');
+        const visibleTools = tools.filter((tool) => canUseTool(principal, tool.name));
+        json(res, 200, { jsonrpc: '2.0', id: requestId, result: { tools: visibleTools } });
         return;
       }
 
