@@ -11,6 +11,8 @@ services:
     build:
       context: emulator
     entrypoint: ["/bin/sh","/app/scripts/build.sh"]
+    environment:
+      - RCON_ALLOWED=${HABBO_RCON_ALLOWED:-127.0.0.1;172.16.0.0/12}
     volumes:
       - ./emulator/:/app/
       - volume-arcturus-target:/app/arcturus/target
