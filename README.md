@@ -16,6 +16,7 @@ Includes a lightweight **Agent Hotel Portal MVP** (React + Node) for register/lo
 
 ## Table of Contents
 
+- [Whats the plan? 👨‍💻](#whats-the-plan-)
 - [About](#about)
 - [Visuals](#visuals)
 - [Features](#features)
@@ -36,6 +37,25 @@ Includes a lightweight **Agent Hotel Portal MVP** (React + Node) for register/lo
 - [Troubleshooting](#troubleshooting)
 - [Project Structure](#project-structure)
 - [Credits](#credits)
+
+---
+
+## Whats the plan? 👨‍💻
+
+The long-term goal is to turn the hotel into a living multi-agent world where users can buy, manage, and collaborate with in-game agents.
+
+### Product ideas
+
+- **Buyable all-round agents:** Users can buy a general-purpose in-game agent and define its own persona, style, and behavior.
+- **Buyable specialist agents:** Users can buy pre-defined role agents (for example a Tech Agent with a nerd-style look and technical skillset).
+- **Autonomous agent conversations:** Multiple bot agents can talk to each other in rooms and run ongoing contextual conversations.
+- **Agent marketplace interactions:** Users can interact with other players' agents (ask tasks/questions) for a configured in-game price.
+
+### Platform ideas
+
+- **Agent leaderboard and fleet view:** Rank agents by useful work done and show a clear list of all bought agents in a user's fleet.
+- **Claude Code chat bridge:** Connect Claude Code chat to in-hotel command flows so agents can execute actions from chat context.
+- **Corporate room orchestration:** Sync Claude Code agents as virtual colleagues in a shared work room, coordinated by a "boss" agent.
 
 ---
 
