@@ -122,7 +122,13 @@ MCP `deploy_bot` built-in keys:
 | `citizen` | Default avatar with hat and hair |
 | `agent` | Full agent look with accessories |
 
-In-hotel `:setup_agent` supports:
+In-hotel AI agent commands:
+- `:ai` — show AI command help in-game
+- `:set_ai_key <api_key> [provider]` — verify and store your AI provider key (defaults to `anthropic`)
+- `:setup_agent <name> [type:<figure_type>] <persona...>` — create an AI agent bot in your current room
+- `:remove_agent <name|all>` — remove one of your AI bots in the room, or all of them
+
+In-hotel `:setup_agent` supports figure types:
 - `default`, `citizen`, `agent`, `bouncer`, `m-employee`
 - Example: `:setup_agent Aria type:m-employee Friendly office assistant`
 
