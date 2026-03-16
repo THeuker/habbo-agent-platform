@@ -21,6 +21,7 @@ export async function sendRconCommand(
     }, 5000);
 
     const { host, port } = getConfig().rcon;
+    const startedAt = Date.now();
     client.connect(port, host, () => {
       client.write(payload);
     });
@@ -34,7 +35,13 @@ export async function sendRconCommand(
       try {
         resolve(JSON.parse(responseBuffer) as RconResponse);
       } catch {
-        reject(new Error(`Invalid RCON response: ${responseBuffer}`));
+        const preview = responseBuffer.length > 300 ? `${responseBuffer.slice(0, 300)}...` : responseBuffer;
+        const display = preview.trim().length > 0 ? preview : '<empty>';
+        reject(
+          new Error(
+            `Invalid RCON response: ${display} (key=${key}, host=${host}, port=${port}, bytes=${responseBuffer.length}, elapsed_ms=${Date.now() - startedAt})`
+          )
+        );
       }
     });
 
