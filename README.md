@@ -75,6 +75,9 @@ Claude Code is supported, but not required.
 ## Visuals
 
 ![Habbo Agent Platform Bot Welcome](docs/images/welcome-bot.png)
+![Hosted Agent Portal Token](docs/images/hosted-agent-portal-token.png)
+![Hosted Agent Portal MCP Calls](docs/images/hosted-agent-portal-calls.png)
+![Agent Visualizer Office](docs/images/agent-visualizer-office.png)
 
 ---
 
