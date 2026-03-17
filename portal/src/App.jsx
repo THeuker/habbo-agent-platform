@@ -328,12 +328,25 @@ export default function App() {
 
   return (
     <main className="page habbo-reception">
-      <div className="reception-layer background" />
-      <div className="reception-layer sun" />
-      <div className="reception-layer drape" />
-      <div className="reception-layer left" />
-      <div className="reception-layer right-repeat" />
-      <div className="reception-layer right" />
+      <div className="corner-branding" aria-hidden="true">
+        <img
+          src="https://tijmendejong.nl/assets/agent-hotel-k_goGW-a.png"
+          alt="Agent Hotel logo"
+          className="corner-branding-image"
+        />
+      </div>
+      <aside className="spotify-widget" aria-label="Spotify music widget">
+        <p className="spotify-widget-title">Theme song</p>
+        <iframe
+          title="Spotify track player"
+          src="https://open.spotify.com/embed/track/4kml1fml3e8NBHCywXNecG?utm_source=generator"
+          width="100%"
+          height="152"
+          frameBorder="0"
+          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+          loading="lazy"
+        />
+      </aside>
 
       <section className="card">
         <div className="debug-toggle">
