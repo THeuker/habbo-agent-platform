@@ -2,6 +2,26 @@
 
 set -euo pipefail
 
+apply_config_overrides() {
+  local cfg="/app/config.ini"
+
+  if [ ! -f "$cfg" ]; then
+    echo "Config file not found at $cfg"
+    return
+  fi
+
+  # Keep runtime config aligned with container env so deploys are deterministic.
+  if [ -n "${RCON_HOST:-}" ]; then
+    sed -i "s#^rcon.host=.*#rcon.host=${RCON_HOST}#g" "$cfg"
+  fi
+  if [ -n "${RCON_PORT:-}" ]; then
+    sed -i "s#^rcon.port=.*#rcon.port=${RCON_PORT}#g" "$cfg"
+  fi
+  if [ -n "${RCON_ALLOWED:-}" ]; then
+    sed -i "s#^rcon.allowed=.*#rcon.allowed=${RCON_ALLOWED}#g" "$cfg"
+  fi
+}
+
 seed_database_if_needed() {
   local db_host db_port db_name db_user db_password
   local table_present sql_base_url base_sql_file migration_sql_file tmp_dir
@@ -44,6 +64,7 @@ seed_database_if_needed() {
 supervisord -c /app/supervisor/supervisord.conf
 
 seed_database_if_needed
+apply_config_overrides
 
 PLUGIN_URL="https://git.krews.org/morningstar/nitrowebsockets-for-ms/-/raw/aff34551b54527199401b343a35f16076d1befd5/target/NitroWebsockets-3.1.jar"
 PLUGIN_DIR="/app/arcturus/target/plugins"
