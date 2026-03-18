@@ -10,6 +10,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import { v4 as uuidv4 } from 'uuid';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
@@ -27,6 +29,10 @@ const PORTAL_BOOTSTRAP_USERNAME = (process.env.PORTAL_BOOTSTRAP_USERNAME || 'Sys
 const PORTAL_BOOTSTRAP_PASSWORD = process.env.PORTAL_BOOTSTRAP_PASSWORD || '';
 const PORTAL_BOOTSTRAP_HABBO_USERNAME = (process.env.PORTAL_BOOTSTRAP_HABBO_USERNAME || 'Systemaccount').trim();
 const PORTAL_RESET_TOKEN_TTL_MINUTES = Number.parseInt(process.env.PORTAL_RESET_TOKEN_TTL_MINUTES || '30', 10);
+const IMAGER_URL     = (process.env.IMAGER_URL     || 'http://nitro-imager:3005').replace(/\/$/, '');
+const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://habbo-ai-service:3002').replace(/\/$/, '');
+const RCON_HOST      = (process.env.RCON_HOST      || 'arcturus');
+const RCON_PORT      = Number.parseInt(process.env.RCON_PORT || '3001', 10);
 const PORTAL_SMTP_HOST = (process.env.PORTAL_SMTP_HOST || '').trim();
 const PORTAL_SMTP_PORT = Number.parseInt(process.env.PORTAL_SMTP_PORT || '1025', 10);
 const PORTAL_SMTP_SECURE = process.env.PORTAL_SMTP_SECURE === 'true';
@@ -45,6 +51,42 @@ const db = mysql.createPool({
   connectionLimit: 8,
   waitForConnections: true
 });
+
+// ─── RCON helper ──────────────────────────────────────────────────────────────
+
+function rconCommand(key, data) {
+  return new Promise((resolve, reject) => {
+    const socket = new net.Socket();
+    let buf = '';
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error('RCON timeout')); }, 5000);
+    socket.connect(RCON_PORT, RCON_HOST, () => socket.write(JSON.stringify({ key, data })));
+    socket.on('data', chunk => { buf += chunk.toString(); });
+    socket.on('close', () => {
+      clearTimeout(timer);
+      try { resolve(JSON.parse(buf)); } catch { reject(new Error('RCON invalid response')); }
+    });
+    socket.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
+// Resolve the live bots row for an ai_agent_config.
+// Prefers bot_id (set since migration 002) over the fragile name+room+user lookup.
+async function findLiveBot(config, habboUserId) {
+  if (config.bot_id) {
+    const [[bot]] = await db.execute(
+      `SELECT id FROM bots WHERE id=? AND type='ai_agent'`,
+      [config.bot_id]
+    );
+    if (bot) return bot;
+  }
+  const [[bot]] = await db.execute(
+    `SELECT id FROM bots WHERE name=? AND room_id=? AND user_id=? AND type='ai_agent'`,
+    [config.name, config.room_id, habboUserId]
+  );
+  return bot || null;
+}
+
+// ─── Mail transport ───────────────────────────────────────────────────────────
 
 const mailTransport = PORTAL_SMTP_HOST
   ? nodemailer.createTransport({
@@ -347,8 +389,17 @@ async function createHabboUser(username) {
 }
 
 const app = express();
-app.use(express.json());
+app.use(helmet());
+app.use(express.json({ limit: '64kb' }));
 app.use(cookieParser());
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts, please try again later.' }
+});
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
@@ -365,7 +416,7 @@ app.get('/api/hotel/status', async (_req, res) => {
   });
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const username = String(req.body?.username || '').trim();
   const password = String(req.body?.password || '');
@@ -413,7 +464,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const login = String(req.body?.login || '').trim();
   const password = String(req.body?.password || '');
   if (!login || !password) {
@@ -455,7 +506,7 @@ app.post('/api/auth/login', async (req, res) => {
   });
 });
 
-app.post('/api/auth/forgot-password', async (req, res) => {
+app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!email) {
     return res.status(400).json({ error: 'email is required' });
@@ -502,7 +553,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 });
 
-app.post('/api/auth/reset-password', async (req, res) => {
+app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const token = String(req.body?.token || '').trim();
   const password = String(req.body?.password || '');
@@ -554,6 +605,7 @@ app.post('/api/auth/logout', (_req, res) => {
 
 app.get('/api/auth/me', authRequired, async (req, res) => {
   const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+  const [[habboUser]] = await db.execute('SELECT look FROM users WHERE id = ? LIMIT 1', [req.user.habbo_user_id]);
 
   res.json({
     ok: true,
@@ -561,7 +613,8 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
       email: req.user.email,
       username: req.user.username,
       habbo_username: req.user.habbo_username,
-      ai_tier: portalUser?.ai_tier || 'basic'
+      ai_tier: portalUser?.ai_tier || 'basic',
+      figure: habboUser?.look || null
     }
   });
 });
@@ -700,6 +753,166 @@ app.post('/api/hotel/join', authRequired, async (req, res) => {
     ok: true,
     login_url: `${HABBO_BASE_URL}?sso=${ticket}`
   });
+});
+
+app.get('/api/hotel/bots', authRequired, async (req, res) => {
+  const habboUserId = req.user.habbo_user_id;
+  const [rows] = await db.execute(`
+    SELECT
+      a.id, a.name, a.persona, COALESCE(b.motto, a.motto, '') AS motto, a.figure, a.gender,
+      a.room_id, a.bot_id, a.active, a.created_at,
+      r.name AS room_name
+    FROM ai_agent_configs a
+    LEFT JOIN rooms r ON r.id = a.room_id
+    LEFT JOIN bots b ON b.id = a.bot_id
+    WHERE a.user_id = ?
+    ORDER BY a.created_at DESC
+  `, [habboUserId]);
+  res.json({ bots: rows });
+});
+
+app.put('/api/hotel/bots/:id', authRequired, async (req, res) => {
+  const configId = Number.parseInt(req.params.id, 10);
+  const habboUserId = req.user.habbo_user_id;
+
+  const name    = (String(req.body.name    || '')).trim().slice(0, 25) || null;
+  const persona = (String(req.body.persona || '')).trim()              || null;
+  const motto   = req.body.motto !== undefined ? (String(req.body.motto)).trim().slice(0, 100) : null;
+  const figure  = (String(req.body.figure  || '')).trim()              || null;
+  const gender  = ['M', 'F'].includes(req.body.gender) ? req.body.gender : null;
+
+  const [[config]] = await db.execute(
+    'SELECT * FROM ai_agent_configs WHERE id=? AND user_id=? AND active=1',
+    [configId, habboUserId]
+  );
+  if (!config) return res.status(404).json({ error: 'Not found' });
+
+  const newName    = name    || config.name;
+  const newPersona = persona || config.persona;
+  const newMotto   = motto   !== null ? motto : (config.motto || '');
+  const newFigure  = figure  || config.figure;
+  const newGender  = gender  || config.gender;
+
+  await db.execute(
+    'UPDATE ai_agent_configs SET name=?, persona=?, motto=?, figure=?, gender=? WHERE id=?',
+    [newName, newPersona, newMotto, newFigure, newGender, configId]
+  );
+
+  // Update live bots row (use bot_id if available for precision; fallback to name+room+user)
+  const liveBot = await findLiveBot(config, habboUserId);
+  if (liveBot) {
+    await db.execute(
+      `UPDATE bots SET name=?, motto=?, figure=?, gender=? WHERE id=?`,
+      [newName, newMotto, newFigure, newGender, liveBot.id]
+    );
+    // Opportunistically persist bot_id if it wasn't set yet
+    if (!config.bot_id) {
+      await db.execute('UPDATE ai_agent_configs SET bot_id=? WHERE id=?', [liveBot.id, configId]);
+    }
+  }
+
+  // Re-init AI session if persona changed
+  let personaUpdated = false;
+  if (newPersona !== config.persona) {
+    const [[keyRow]] = await db.execute(
+      'SELECT api_key, provider FROM ai_api_keys WHERE user_id=? AND verified=1',
+      [habboUserId]
+    );
+    if (keyRow) {
+      // After a name update the config.name is stale; use updated config for lookup
+      const updatedConfig = { ...config, name: newName };
+      const bot = await findLiveBot(updatedConfig, habboUserId);
+      if (bot) {
+        try {
+          const r = await fetch(`${AI_SERVICE_URL}/api/init-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_id: bot.id, user_id: habboUserId, persona: newPersona, api_key: keyRow.api_key, provider: keyRow.provider || 'anthropic' })
+          });
+          personaUpdated = r.ok;
+        } catch { /* AI service unavailable – not critical */ }
+      }
+    }
+  }
+
+  // Push all changes live in one RCON call (bot stays in room, no respawn)
+  if (liveBot) {
+    const update = {
+      bot_id: liveBot.id,
+      name:   newName   !== config.name         ? newName   : undefined,
+      motto:  newMotto  !== (config.motto || '') ? newMotto  : undefined,
+      figure: newFigure !== config.figure        ? newFigure : undefined,
+      gender: newGender !== config.gender        ? newGender : undefined,
+    };
+    const hasChanges = update.name !== undefined || update.motto !== undefined
+                    || update.figure !== undefined || update.gender !== undefined;
+    if (hasChanges) {
+      try { await rconCommand('updatebotvisuals', update); } catch { /* applies on next room load */ }
+    }
+  }
+
+  const visualChanged = newName !== config.name || newFigure !== config.figure || newGender !== config.gender;
+  res.json({ ok: true, personaUpdated, visualChanged });
+});
+
+app.delete('/api/hotel/bots/:id', authRequired, async (req, res) => {
+  const configId    = Number.parseInt(req.params.id, 10);
+  const habboUserId = req.user.habbo_user_id;
+
+  const [[config]] = await db.execute(
+    'SELECT * FROM ai_agent_configs WHERE id=? AND user_id=?',
+    [configId, habboUserId]
+  );
+  if (!config) return res.status(404).json({ error: 'Not found' });
+
+  const bot = await findLiveBot(config, habboUserId);
+  if (bot) {
+    let rconOk = false;
+    try {
+      const r = await rconCommand('deletebot', { bot_id: bot.id });
+      rconOk = r?.status === 0;
+    } catch { /* RCON unavailable */ }
+    if (!rconOk) await db.execute('DELETE FROM bots WHERE id=?', [bot.id]);
+  }
+
+  await db.execute('UPDATE ai_agent_configs SET active=0, bot_id=NULL WHERE id=?', [configId]);
+  res.json({ ok: true });
+});
+
+
+const FIGURE_TYPES = {
+  // Male figures
+  'default-m':      { gender: 'M', figure: 'hd-180-1.ch-210-66.lg-270-110.sh-300-91' },
+  'citizen-m':      { gender: 'M', figure: 'hd-180-1.ch-210-66.lg-270-110.sh-300-91.ha-1012-110.hr-828-61' },
+  'agent-m':        { gender: 'M', figure: 'hd-3095-12.ch-255-64.lg-3235-96.sh-295-91.ha-3426-110.hr-3531-61.he-1601-0.ea-3169-0.fa-1211-1408.cp-3310-0.cc-3007-0.ca-1809-0.wa-2007-0' },
+  'bouncer-m':      { gender: 'M', figure: 'ca-1809.cc-3007-82.ch-255-82.cp-3119-82.ea-3169-62.fa-1211-62.ha-1012-110.hd-3095-1.he-1601-62.hr-828-35.lg-3202-110.sh-290-91.wa-2007' },
+  'employee-m':     { gender: 'M', figure: 'cc-3007-62.ch-265-82.ea-1403-62.hd-3095-8.hr-155-61.lg-285-90.sh-300-91.wa-2007' },
+  // Female figures
+  'default-f':      { gender: 'F', figure: 'hd-620-1.ch-680-66.lg-715-110.sh-905-91' },
+  'citizen-f':      { gender: 'F', figure: 'hd-620-1.ch-680-66.lg-715-110.sh-905-91.ha-1012-110.hr-828-61' },
+  'agent-f':        { gender: 'F', figure: 'hd-620-12.ch-3005-64.lg-3006-96.sh-905-91.ha-3426-110.hr-3531-61.he-1601-0.ea-3169-0' },
+  'employee-f':     { gender: 'F', figure: 'hd-620-8.ch-3013-82.lg-3017-82.sh-906-91.hr-828-35' },
+};
+
+app.get('/api/figure-types', (req, res) => {
+  res.json({ figureTypes: FIGURE_TYPES });
+});
+
+app.get('/api/figure', async (req, res) => {
+  const params = new URLSearchParams();
+  if (req.query.figure)         params.set('figure',         String(req.query.figure));
+  if (req.query.direction)      params.set('direction',      String(req.query.direction));
+  if (req.query.head_direction) params.set('head_direction', String(req.query.head_direction));
+  try {
+    const upstream = await fetch(`${IMAGER_URL}/figure?${params}`);
+    if (!upstream.ok) return res.status(502).end();
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(buf);
+  } catch {
+    res.status(502).end();
+  }
 });
 
 const indexPath = path.join(__dirname, 'dist/index.html');

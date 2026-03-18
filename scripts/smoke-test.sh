@@ -181,7 +181,7 @@ void (async () => {
       return 0
     fi
 
-    LAST_ERROR="MCP tool call failed (getOnlinePlayers). Check MCP env, DB tunnel, and dependencies."
+    LAST_ERROR="MCP tool call failed (getOnlinePlayers). Check MCP env, DB/RCON connectivity, and dependencies."
     LAST_DEBUG="$mcp_output"
     return 1
   done

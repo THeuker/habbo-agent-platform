@@ -212,12 +212,6 @@ HABBO_DB_PORT="${HABBO_DB_PORT:-13306}"
 HABBO_DOCKER_SUBNET="${HABBO_DOCKER_SUBNET:-172.28.0.0/16}"
 
 MCP_API_KEY="${MCP_API_KEY:-}"
-SSH_TUNNEL_ENABLED="${SSH_TUNNEL_ENABLED:-false}"
-SSH_TUNNEL_HOST="${SSH_TUNNEL_HOST:-}"
-SSH_TUNNEL_USER="${SSH_TUNNEL_USER:-}"
-SSH_TUNNEL_KEY_PATH="${SSH_TUNNEL_KEY_PATH:-}"
-SSH_TUNNEL_LOCAL_RCON_PORT="${SSH_TUNNEL_LOCAL_RCON_PORT:-43001}"
-SSH_TUNNEL_LOCAL_DB_PORT="${SSH_TUNNEL_LOCAL_DB_PORT:-43306}"
 
 if [ -n "$HABBO_OWNER_OR_ORG" ]; then
   pass "HABBO_OWNER_OR_ORG set: $HABBO_OWNER_OR_ORG"
@@ -242,25 +236,6 @@ check_port "rcon-local-bind" "127.0.0.1" "$HABBO_RCON_PORT" fail arcturus
 check_port "mysql-local-bind" "127.0.0.1" "$HABBO_DB_PORT" fail mysql
 
 check_subnet "$HABBO_DOCKER_SUBNET"
-
-if [ "$SSH_TUNNEL_ENABLED" = "true" ]; then
-  if [ -z "$SSH_TUNNEL_HOST" ] || [ -z "$SSH_TUNNEL_USER" ] || [ -z "$SSH_TUNNEL_KEY_PATH" ]; then
-    fail "SSH tunnel enabled but SSH_TUNNEL_HOST/USER/KEY_PATH not fully configured"
-  else
-    pass "SSH tunnel core settings configured"
-  fi
-
-  if [ -f "$SSH_TUNNEL_KEY_PATH" ]; then
-    pass "SSH private key exists: $SSH_TUNNEL_KEY_PATH"
-  else
-    fail "SSH private key not found: $SSH_TUNNEL_KEY_PATH"
-  fi
-
-  check_port "ssh-tunnel-local-rcon" "127.0.0.1" "$SSH_TUNNEL_LOCAL_RCON_PORT" warn
-  check_port "ssh-tunnel-local-db" "127.0.0.1" "$SSH_TUNNEL_LOCAL_DB_PORT" warn
-else
-  warn "SSH tunnel disabled (SSH_TUNNEL_ENABLED=false)"
-fi
 
 printf "\n"
 info "Preflight summary: PASS=$PASS_COUNT WARN=$WARN_COUNT FAIL=$FAIL_COUNT"

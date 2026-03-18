@@ -17,7 +17,7 @@ export type Config = {
   habboBaseUrl: string;
 };
 
-/** Reads current process.env so tunnel-applied RCON/DB host and port are used. */
+/** Reads current process.env for runtime MCP configuration. */
 export function getConfig(): Config {
   return {
     rcon: {

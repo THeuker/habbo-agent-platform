@@ -81,6 +81,18 @@ mcp-install:
 mcp-dev:
   cd habbo-mcp && npx tsx src/index.ts
 
+# Install hooks (target: both|claude|cursor)
+hooks-install target='both':
+  target="{{target}}"; target="${target#target=}"; if [ "$target" = "claude" ]; then bash hooks/claude/install.sh; elif [ "$target" = "cursor" ]; then bash hooks/cursor/install.sh; else bash hooks/install.sh; fi
+
+# Show hook status (target: both|claude|cursor)
+hooks-status target='both':
+  target="{{target}}"; target="${target#target=}"; if [ "$target" = "claude" ]; then bash hooks/claude/status.sh; elif [ "$target" = "cursor" ]; then bash hooks/cursor/status.sh; else bash hooks/status.sh; fi
+
+# Uninstall hooks (target: both|claude|cursor)
+hooks-uninstall target='both':
+  target="{{target}}"; target="${target#target=}"; if [ "$target" = "claude" ]; then bash hooks/claude/uninstall.sh; elif [ "$target" = "cursor" ]; then bash hooks/cursor/uninstall.sh; else bash hooks/uninstall.sh; fi
+
 # Open MySQL shell in mysql container
 mysql:
   docker exec -it mysql sh -lc "mysql -u arcturus_user -parcturus_pw arcturus"

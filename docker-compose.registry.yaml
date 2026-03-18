@@ -111,11 +111,26 @@ services:
       - DB_NAME=arcturus
       - DB_USER=arcturus_user
       - DB_PASSWORD=arcturus_pw
+      - IMAGER_URL=${HABBO_IMAGER_URL:-http://nitro-imager:3005}
     ports:
       - ${HABBO_PORTAL_PORT:-3090}:3000
     depends_on:
       - mysql
       - mailpit
+    networks:
+      nitro:
+
+  nitro-imager:
+    container_name: nitro-imager
+    image: ghcr.io/${HABBO_OWNER_OR_ORG}/nitro-imager:latest
+    volumes:
+      - volume-nitro-assets:/assets:ro
+    environment:
+      - PORT=3005
+      - FIGURE_DIR=/assets/bundled/figure
+      - GAMEDATA_DIR=/assets/gamedata
+    ports:
+      - "127.0.0.1:${HABBO_IMAGER_PORT:-3005}:3005"
     networks:
       nitro:
 

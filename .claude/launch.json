@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "agent-portal",
+      "runtimeExecutable": "/opt/homebrew/bin/node",
+      "runtimeArgs": [".claude/proxy.mjs"],
+      "port": 3091
+    }
+  ]
+}

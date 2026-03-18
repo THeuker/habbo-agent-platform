@@ -5,10 +5,11 @@ import { XMLParser } from 'fast-xml-parser';
 import { queryOne } from '../db.js';
 
 export const BUILTIN_FIGURE_TYPES = {
-  default: 'hd-180-1.ch-210-66.lg-270-110.sh-300-91',
-  citizen: 'hd-180-1.ch-210-66.lg-270-110.sh-300-91.ha-1012-110.hr-828-61',
-  agent:
-    'hd-3095-12.ch-255-64.lg-3235-96.sh-295-91.ha-3426-110.hr-3531-61.he-1601-0.ea-3169-0.fa-1211-1408.cp-3310-0.cc-3007-0.ca-1809-0.wa-2007-0',
+  default:      'hd-180-1.ch-210-66.lg-270-110.sh-300-91',
+  citizen:      'hd-180-1.ch-210-66.lg-270-110.sh-300-91.ha-1012-110.hr-828-61',
+  agent:        'hd-3095-12.ch-255-64.lg-3235-96.sh-295-91.ha-3426-110.hr-3531-61.he-1601-0.ea-3169-0.fa-1211-1408.cp-3310-0.cc-3007-0.ca-1809-0.wa-2007-0',
+  bouncer:      'ca-1809.cc-3007-82.ch-255-82.cp-3119-82.ea-3169-62.fa-1211-62.ha-1012-110.hd-3095-1.he-1601-62.hr-828-35.lg-3202-110.sh-290-91.wa-2007',
+  'm-employee': 'cc-3007-62.ch-265-82.ea-1403-62.hd-3095-8.hr-155-61.lg-285-90.sh-300-91.wa-2007',
 } as const;
 
 const DEFAULT_FIGUREDATA_URL = 'https://habbo.com/gamedata/figuredata/0';

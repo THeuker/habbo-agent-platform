@@ -28,6 +28,7 @@ const DEFAULT_BASE_X = Number.parseInt(process.env.HABBO_HOOK_SPAWN_X || '5', 10
 const DEFAULT_BASE_Y = Number.parseInt(process.env.HABBO_HOOK_SPAWN_Y || '5', 10);
 const DEFAULT_ROOM_ID = Number.parseInt(process.env.HABBO_HOOK_ROOM_ID || '0', 10) || null;
 const DEFAULT_HOOK_MCP_BASE_URL = 'https://hotel-mcp.fixdev.nl/';
+const DEFAULT_HOOK_TRANSPORT = 'remote';
 const EVENT_DEDUPE_MS = 8_000;
 const MAX_CHAT_LENGTH = 240;
 const DEFAULT_STATE_FILE = path.join(os.homedir(), '.cursor', 'habbo-agent-hook-state.json');
@@ -56,6 +57,14 @@ function normalizeMcpEndpoint(raw?: string): string | null {
     return value;
   }
   return `${value.replace(/\/+$/, '')}/mcp`;
+}
+
+function normalizeHookTransport(raw?: string): 'remote' | 'local' | 'auto' {
+  const value = (raw || '').trim().toLowerCase();
+  if (value === 'local' || value === 'auto' || value === 'remote') {
+    return value;
+  }
+  return DEFAULT_HOOK_TRANSPORT as 'remote';
 }
 
 async function main(): Promise<void> {
@@ -188,11 +197,23 @@ async function loadToolFns(): Promise<{
   deleteBot: (botId: number) => Promise<unknown>;
   listBots: () => Promise<Array<{ id: number; room_id: number; x: number; y: number }>>;
 } | null> {
-  const remoteEndpoint = normalizeMcpEndpoint(
-    process.env.HABBO_HOOK_MCP_BASE_URL || process.env.HABBO_MCP_BASE_URL || DEFAULT_HOOK_MCP_BASE_URL
-  );
-  if (remoteEndpoint) {
-    return loadHttpToolFns(remoteEndpoint, process.env.MCP_API_KEY || '');
+  const transport = normalizeHookTransport(process.env.HABBO_HOOK_TRANSPORT);
+  const configuredEndpoint = normalizeMcpEndpoint(process.env.HABBO_HOOK_MCP_BASE_URL || process.env.HABBO_MCP_BASE_URL);
+  const remoteEndpoint = configuredEndpoint || normalizeMcpEndpoint(DEFAULT_HOOK_MCP_BASE_URL);
+
+  if ((transport === 'remote' || transport === 'auto') && remoteEndpoint) {
+    try {
+      return await loadHttpToolFns(remoteEndpoint, process.env.MCP_API_KEY || '');
+    } catch (err) {
+      if (transport === 'remote') {
+        throw err;
+      }
+      // In auto mode, fall back to local tools if remote endpoint is unavailable.
+    }
+  }
+
+  if (transport === 'remote') {
+    return null;
   }
 
   const [{ talkAsPlayer }, { talkBot }, { getPlayerRoom }, { deployBot }, { deleteBot }, { listBots }] =
