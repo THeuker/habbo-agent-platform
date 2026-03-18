@@ -98,7 +98,8 @@ jobs:
           context: ./nitro-imager
           file: ./nitro-imager/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          # node-canvas dependency build is currently unstable under qemu arm64 emulation.
+          platforms: linux/amd64
           cache-from: type=gha,scope=nitro-imager
           cache-to: type=gha,mode=max,scope=nitro-imager
           tags: ${{ steps.meta_nitro_imager.outputs.tags }}
