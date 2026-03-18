@@ -182,8 +182,9 @@ fi
 if [ -f "$ROOT_ENV_FILE" ]; then
   info "Loading root env: $ROOT_ENV_FILE"
   set -a
+  # Allow CRLF-edited env files by stripping carriage returns before sourcing.
   # shellcheck disable=SC1090
-  source "$ROOT_ENV_FILE"
+  source <(tr -d '\r' < "$ROOT_ENV_FILE")
   set +a
   pass "Root env loaded"
 else
@@ -194,7 +195,7 @@ if [ -f "$MCP_ENV_FILE" ]; then
   info "Loading MCP env: $MCP_ENV_FILE"
   set -a
   # shellcheck disable=SC1090
-  source "$MCP_ENV_FILE"
+  source <(tr -d '\r' < "$MCP_ENV_FILE")
   set +a
   pass "MCP env loaded"
 else
@@ -209,6 +210,7 @@ HABBO_NITRO_BIND_PORT="${HABBO_NITRO_BIND_PORT:-1080}"
 HABBO_ASSETS_BIND_PORT="${HABBO_ASSETS_BIND_PORT:-8080}"
 HABBO_SWF_BIND_PORT="${HABBO_SWF_BIND_PORT:-8081}"
 HABBO_DB_PORT="${HABBO_DB_PORT:-13306}"
+HABBO_IMAGER_PORT="${HABBO_IMAGER_PORT:-3005}"
 HABBO_DOCKER_SUBNET="${HABBO_DOCKER_SUBNET:-172.28.0.0/16}"
 
 MCP_API_KEY="${MCP_API_KEY:-}"
@@ -234,6 +236,7 @@ check_port "assets" "0.0.0.0" "$HABBO_ASSETS_BIND_PORT" fail nitro
 check_port "swf" "0.0.0.0" "$HABBO_SWF_BIND_PORT" fail nitro
 check_port "rcon-local-bind" "127.0.0.1" "$HABBO_RCON_PORT" fail arcturus
 check_port "mysql-local-bind" "127.0.0.1" "$HABBO_DB_PORT" fail mysql
+check_port "imager-local-bind" "127.0.0.1" "$HABBO_IMAGER_PORT" fail nitro-imager
 
 check_subnet "$HABBO_DOCKER_SUBNET"
 
