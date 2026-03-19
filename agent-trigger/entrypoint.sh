@@ -3,8 +3,12 @@ set -e
 
 MCP_URL="${HABBO_MCP_URL:-http://habbo-mcp:3003/mcp}"
 MCP_KEY="${MCP_API_KEY:-}"
-PROJECT_DIR="${HABBO_PROJECT_DIR:-/project}"
+PROJECT_DIR="/tmp/agent-project"
 MCP_JSON="$PROJECT_DIR/.mcp.json"
+
+# Create writable project dir and copy agents from read-only volume
+mkdir -p "$PROJECT_DIR/agents"
+cp -r /project/agents/. "$PROJECT_DIR/agents/" 2>/dev/null || true
 
 echo "[entrypoint] Writing MCP config → $MCP_JSON"
 echo "[entrypoint] hotel-mcp URL: $MCP_URL"
@@ -23,5 +27,6 @@ cat > "$MCP_JSON" << EOF
 }
 EOF
 
-echo "[entrypoint] MCP config written. Starting server..."
+echo "[entrypoint] MCP config written. Project dir: $PROJECT_DIR"
+export HABBO_PROJECT_DIR="$PROJECT_DIR"
 exec bun run /app/src/server.ts
