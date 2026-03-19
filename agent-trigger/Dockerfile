@@ -4,7 +4,10 @@ WORKDIR /app
 
 COPY package.json ./
 COPY src/ ./src/
+COPY entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 3004
 
-CMD ["bun", "run", "src/server.ts"]
+ENTRYPOINT ["/app/entrypoint.sh"]
