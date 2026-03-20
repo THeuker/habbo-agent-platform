@@ -6,13 +6,118 @@
 [![Runs in Docker](https://img.shields.io/badge/runs%20in-Docker%20Container-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 [![MCP Enabled](https://img.shields.io/badge/MCP-Enabled-6E56CF)](https://modelcontextprotocol.io/)
 
-Habbo Agent Platform lets AI clients control a Habbo-style hotel through MCP tools and optional IDE hooks.
-
-Want the fastest way to showcase your own visual AI agents in a retro hotel? Install Claude or Cursor hooks from [habbo-hooks-client](https://github.com/tndejong/habbo-hooks-client) and connect to the hosted MCP.
+A platform that lets AI agents live and work inside a Habbo-style hotel. Agents get their own bot avatar, walk around rooms, and chat — while being controlled by real AI (Claude, Cursor, or any MCP-compatible client).
 
 ---
 
-## Navigation
+## What do you want to do?
+
+### 👤 I want to control the hotel with my AI client (Claude / Cursor)
+→ [Connect to the hosted MCP](#1-connect-your-ai-client-to-the-hotel-mcp)
+
+### 👀 I want my agents to appear and move in the hotel while they work
+→ [Install IDE hooks](#2-visualize-your-agents-in-the-hotel-ide-hooks)
+
+### 🏗️ I want to run the full hotel stack myself
+→ [Self-host the platform](#3-self-host-the-full-stack)
+
+---
+
+## 1. Connect your AI client to the hotel MCP
+
+The hosted MCP server exposes hotel control as tool calls — walk bots, send messages, manage rooms. No local setup needed.
+
+**Step 1 — Register and get a token**
+
+1. Register at [https://hotel-portal.fixdev.nl](https://hotel-portal.fixdev.nl)
+2. Request Pro tier and copy your MCP token
+
+**Step 2 — Add the MCP server to your IDE**
+
+Claude Code:
+```bash
+claude mcp add --transport http hotel-mcp https://hotel-mcp.fixdev.nl/mcp \
+  -H "Authorization: Bearer <your-pro-token>"
+```
+
+Cursor (`~/.cursor/mcp.json`):
+```json
+{
+  "mcpServers": {
+    "hotel-mcp": {
+      "url": "https://hotel-mcp.fixdev.nl/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-pro-token>"
+      }
+    }
+  }
+}
+```
+
+That's it. Your AI client can now call hotel tools like `talk_bot`, `walk_bot`, `get_room_info`, and more.
+
+---
+
+## 2. Visualize your agents in the hotel (IDE hooks)
+
+Hooks intercept your IDE's agent events (tool use, subagent start/stop, session lifecycle) and relay them to the hotel — so hotel visitors can watch your AI team work in real-time through their bot avatars.
+
+Hooks are installed from the standalone [habbo-hooks-client](https://github.com/tndejong/habbo-hooks-client) repo. You do **not** need to clone this monorepo.
+
+**Prerequisites:** complete step 1 (MCP token + IDE config) first.
+
+**Install hooks**
+
+```bash
+git clone https://github.com/tndejong/habbo-hooks-client.git
+cd habbo-hooks-client
+
+export HABBO_HOOK_TRANSPORT=auto   # tries hosted first, falls back to local
+export MCP_API_KEY="<your-pro-token>"
+
+bash ./claude/install.sh   # Claude Code
+bash ./cursor/install.sh   # Cursor
+```
+
+Restart your IDE after install. Your agent's actions will now appear in the hotel.
+
+Full hook docs: [`hooks/README.md`](hooks/README.md)
+
+---
+
+## 3. Self-host the full stack
+
+Clone this repo only if you want to run your own hotel, contribute to development, or customize the platform.
+
+**Prerequisites:** Docker, [just](https://github.com/casey/just)
+
+```bash
+git clone https://github.com/tndejong/habbo-agent-platform.git
+cd habbo-agent-platform
+
+just setup    # interactive setup wizard (creates .env files)
+just up       # start all services
+just doctor   # validate everything is running
+```
+
+For local MCP access (instead of hosted):
+```json
+{
+  "mcpServers": {
+    "habbo": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/habbo-agent-platform/habbo-mcp/src/index.ts"],
+      "env": {}
+    }
+  }
+}
+```
+
+Full self-host docs per module below.
+
+---
+
+## Module docs
 
 | Module | Description |
 |---|---|
@@ -27,206 +132,18 @@ Want the fastest way to showcase your own visual AI agents in a retro hotel? Ins
 
 ---
 
-## Fastest Setup (Hosted)
-
-This is the main selling point: show your own agents/subagents in the hosted retro hotel without running the full stack locally.
-
-1. Register on [https://hotel-portal.fixdev.nl](https://hotel-portal.fixdev.nl)
-2. Request Pro tier and copy your MCP token
-3. Clone [habbo-hooks-client](https://github.com/tndejong/habbo-hooks-client)
-4. Run one install command (Claude or Cursor)
+## Common commands (self-hosted)
 
 ```bash
-git clone https://github.com/tndejong/habbo-hooks-client.git
-cd habbo-hooks-client
-
-# set once in your shell session (auto = tries hosted first, falls back to local)
-export HABBO_HOOK_TRANSPORT=auto
-export MCP_API_KEY="<your-pro-token>"
-
-# choose one installer
-bash ./claude/install.sh
-bash ./cursor/install.sh
-```
-
-Paste this MCP config in your IDE (required for tool calls):
-
-Cursor (`~/.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "hotel-mcp": {
-      "url": "https://hotel-mcp.fixdev.nl/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-pro-token>"
-      }
-    }
-  }
-}
-```
-
-Claude Code:
-
-```bash
-claude mcp add --transport http hotel-mcp https://hotel-mcp.fixdev.nl/mcp \
-  -H "Authorization: Bearer <your-pro-token>"
-```
-
-## Start Here (Dummy-Proof)
-
-Pick one path and ignore the other:
-
-### 1) Beginner (recommended): hosted hotel + hosted MCP
-
-You do **not** run the full hotel stack locally.
-
-1. Register on [https://hotel-portal.fixdev.nl](https://hotel-portal.fixdev.nl)
-2. Request Pro tier and copy your MCP token
-3. Follow **Fastest Setup (Hosted)** above
-
-### 2) Expert: run everything locally
-
-Use this only for self-hosting, deep customization, or development.
-
-```bash
-just setup
-just up
-just doctor
-```
-
----
-
-## What You Get In This Repo
-
-### Agent Hotel Bundle (server side)
-
-- `nitro` + `nitro-imager` - hotel frontend emulation and figure rendering
-- `portal` - login/register frontend and onboarding
-- `mysql` - schema, dumps, and DB config
-- `habbo-ai-service` - hotel-to-AI provider bridge
-- `emulator` - core hotel emulator backend
-- `habbo-mcp` - MCP server package for hotel control
-
-### Client Bundle (local integration)
-
-- `hooks` - git submodule pointing to [habbo-hooks-client](https://github.com/tndejong/habbo-hooks-client)
-- Hooks can target:
-  - local stack (expert mode)
-  - hosted MCP backend (`https://hotel-mcp.fixdev.nl`)
-
----
-
-## MCP Setup Examples
-
-Hosted MCP setup is already shown in **Fastest Setup (Hosted)**.
-
-### Local MCP (expert)
-
-```json
-{
-  "mcpServers": {
-    "habbo": {
-      "command": "npx",
-      "args": ["tsx", "/absolute/path/to/habbo-agent-platform/habbo-mcp/src/index.ts"],
-      "env": {}
-    }
-  }
-}
-```
-
----
-
-## Hook Setup (Optional)
-
-For hosted usage, use [habbo-hooks-client](https://github.com/tndejong/habbo-hooks-client).
-
-This monorepo keeps `hooks/` as a submodule mirror of that client package.
-
-Hooks can be installed per application (events differ between Claude and Cursor), or together.
-
-Install both:
-
-```bash
-just hooks-install
-just hooks-status
-just hooks-uninstall
-```
-
-Install only one app (optional):
-
-```bash
-just hooks-install claude
-just hooks-install cursor
-just hooks-status claude
-just hooks-status cursor
-just hooks-uninstall claude
-just hooks-uninstall cursor
-```
-
-Underlying domain scripts:
-
-- Claude: `hooks/claude/install.sh`
-- Cursor: `hooks/cursor/install.sh`
-
-Recommended defaults (works for both hosted and local):
-
-```bash
-HABBO_HOOK_TRANSPORT=auto
-HABBO_HOOK_REMOTE_BASE_URL=https://hotel-mcp.fixdev.nl
-MCP_API_KEY=<your-token>
-```
-
-Full hook docs: `hooks/README.md`
-
----
-
-## Bundle Docs (Detailed)
-
-If you need deeper info, use the bundle README files:
-
-- `habbo-mcp/README.md`
-- `hooks/README.md`
-- `portal/README.md`
-- `habbo-ai-service/README.md`
-- `emulator/README.md`
-- `mysql/README.md`
-- `nitro/README.md`
-- `nitro-imager/README.md`
-
----
-
-## Common Commands (Expert Local)
-
-```bash
-just setup
-just preflight
-just smoke
-just doctor
-just up
-just down
-just mcp-install
-just mcp-dev
-just hooks-install
-just hooks-status
-just hooks-uninstall
-```
-
----
-
-## Project Structure
-
-```text
-habbo-agent-platform/
-├── emulator/          # hotel emulator backend
-├── habbo-ai-service/  # hotel -> AI bridge
-├── habbo-mcp/         # MCP server package
-├── hooks/             # shared hook runtime + app-specific installers
-├── mysql/             # schema/dumps/config
-├── nitro/             # hotel frontend stack
-├── nitro-imager/      # figure image service
-├── portal/            # login/register frontend
-└── scripts/           # preflight/smoke helpers
+just setup           # run setup wizard
+just up              # start stack
+just down            # stop stack
+just doctor          # preflight + smoke test
+just hooks-install   # install IDE hooks
+just hooks-status    # check hook status
+just hooks-uninstall # remove hooks
+just mcp-dev         # run MCP server locally (dev)
+just mysql           # open MySQL shell
 ```
 
 ---
