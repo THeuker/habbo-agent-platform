@@ -116,7 +116,7 @@ services:
       - RCON_HOST=${HABBO_RCON_HOST:-arcturus}
       - RCON_PORT=${HABBO_RCON_PORT:-3001}
       - AGENT_TRIGGER_URL=${HABBO_AGENT_TRIGGER_URL:-http://agent-trigger:3004}
-      - PORTAL_INTERNAL_SECRET=${HABBO_PORTAL_INTERNAL_SECRET:-change-this-secret}
+      - PORTAL_INTERNAL_SECRET=${HOTEL_PORTAL_INTERNAL_SECRET:-change-this-secret}
       - MCP_API_KEY=${HOTEL_MCP_API_KEY:-}
       - HABBO_MCP_URL=${HOTEL_MCP_URL:-http://habbo-mcp:3003/mcp}
     ports:
@@ -202,8 +202,8 @@ services:
       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
       - TWILIO_FROM_NUMBER=${TWILIO_FROM_NUMBER:-}
       - HABBO_HOOK_ENABLED=false
-      - PORTAL_URL=${HABBO_PORTAL_INTERNAL_URL:-http://agent-portal:3000}
-      - PORTAL_INTERNAL_SECRET=${HABBO_PORTAL_INTERNAL_SECRET:-change-this-secret}
+      - PORTAL_URL=${HOTEL_PORTAL_INTERNAL_URL:-http://agent-portal:3000}
+      - PORTAL_INTERNAL_SECRET=${HOTEL_PORTAL_INTERNAL_SECRET:-change-this-secret}
     volumes:
       - .:/project:ro
     ports:
