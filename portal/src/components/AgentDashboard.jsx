@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { HabboFigure } from './HabboFigure'
 import {
   Bot, Package, Play, Edit2, Trash2, Plus, X, Check,
   Loader2, AlertCircle, Users, Zap, ChevronDown, ChevronUp, Square,
-  Shield, Wifi, WifiOff, Key, ServerCog,
+  Shield, Wifi, WifiOff, Key, ServerCog, Terminal, RefreshCw,
 } from 'lucide-react'
 
 // ── Markdown Editor ───────────────────────────────────────────────────────
@@ -86,6 +86,8 @@ export function AgentDashboard({ me }) {
 
   const [liveBots, setLiveBots] = useState([])
   const [mcpStatus, setMcpStatus] = useState(null)
+  const [logLines, setLogLines] = useState([])
+  const [logPaused, setLogPaused] = useState(false)
 
   // Poll agent-trigger health every 5s to show active team status
   useEffect(() => {
@@ -102,6 +104,21 @@ export function AgentDashboard({ me }) {
     const id = setInterval(poll, 5000)
     return () => clearInterval(id)
   }, [])
+
+  // Poll logs every 3s
+  useEffect(() => {
+    async function pollLogs() {
+      if (logPaused) return
+      try {
+        const res = await fetch('/api/agents/logs?lines=150', { credentials: 'include' })
+        const d = await res.json().catch(() => ({}))
+        if (d.lines) setLogLines(d.lines)
+      } catch { /* ignore */ }
+    }
+    pollLogs()
+    const id = setInterval(pollLogs, 3000)
+    return () => clearInterval(id)
+  }, [logPaused])
 
   async function stopTeam() {
     setStopping(true)
@@ -229,7 +246,82 @@ export function AgentDashboard({ me }) {
         })()}
         {tab === 'packs' && <PacksView />}
         {tab === 'integrated' && <IntegratedView />}
-        {tab === 'developer' && me?.is_developer && <DeveloperView mcpStatus={mcpStatus} />}
+        {tab === 'developer' && me?.is_developer && <DeveloperView mcpStatus={mcpStatus} logLines={logLines} logPaused={logPaused} setLogPaused={setLogPaused} />}
+
+        {/* Live log panel — shown on all tabs when a team is running */}
+        {activeTeam && tab !== 'developer' && (
+          <LogPanel lines={logLines} paused={logPaused} onTogglePause={() => setLogPaused(p => !p)} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Log Panel ─────────────────────────────────────────────────────────────
+
+const LOG_COLORS = {
+  '[tool→]':    'text-blue-400',
+  '[tool←]':    'text-emerald-400',
+  '[think]':    'text-yellow-300/80',
+  '[done]':     'text-green-400 font-semibold',
+  '[trigger]':  'text-purple-400',
+  '[narrator]': 'text-pink-400',
+  '[claude:err]': 'text-red-400',
+  '[voice]':    'text-cyan-400',
+}
+
+function logColor(line) {
+  for (const [key, cls] of Object.entries(LOG_COLORS)) {
+    if (line.includes(key)) return cls
+  }
+  return 'text-muted-foreground'
+}
+
+function LogPanel({ lines, paused, onTogglePause }) {
+  const bottomRef = useRef(null)
+  const [autoScroll, setAutoScroll] = useState(true)
+
+  useEffect(() => {
+    if (autoScroll && !paused && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [lines, autoScroll, paused])
+
+  return (
+    <div className="rounded-xl border border-border bg-[#0d0d0d] overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
+        <Terminal className="w-3.5 h-3.5 text-primary" />
+        <span className="text-xs font-semibold text-foreground">Agent Logs</span>
+        <span className="text-xs text-muted-foreground ml-1">— live output from running team</span>
+        <div className="ml-auto flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+            <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} className="w-3 h-3 accent-primary" />
+            Auto-scroll
+          </label>
+          <button
+            onClick={onTogglePause}
+            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded border transition-colors ${paused ? 'text-yellow-400 border-yellow-500/40 bg-yellow-500/10' : 'text-muted-foreground border-border hover:text-foreground'}`}
+          >
+            <RefreshCw className={`w-3 h-3 ${paused ? '' : 'animate-spin'}`} />
+            {paused ? 'Paused' : 'Live'}
+          </button>
+        </div>
+      </div>
+      <div className="h-72 overflow-y-auto font-mono text-xs px-4 py-3 space-y-0.5">
+        {lines.length === 0 && (
+          <p className="text-muted-foreground/50 italic">No log entries yet — trigger a team to see output here.</p>
+        )}
+        {lines.map((line, i) => {
+          const ts = line.slice(0, 24)
+          const rest = line.slice(25)
+          return (
+            <div key={i} className="flex gap-2 leading-5">
+              <span className="text-muted-foreground/40 flex-shrink-0 select-none">{ts.slice(11, 23)}</span>
+              <span className={logColor(line)}>{rest}</span>
+            </div>
+          )
+        })}
+        <div ref={bottomRef} />
       </div>
     </div>
   )
@@ -237,7 +329,7 @@ export function AgentDashboard({ me }) {
 
 // ── Developer View ────────────────────────────────────────────────────────
 
-function DeveloperView({ mcpStatus }) {
+function DeveloperView({ mcpStatus, logLines, logPaused, setLogPaused }) {
   const servers = mcpStatus?.servers ?? []
   const loading = mcpStatus === null
 
@@ -320,6 +412,9 @@ function DeveloperView({ mcpStatus }) {
           </div>
         )}
       </div>
+
+      {/* Log panel always visible in Developer tab */}
+      <LogPanel lines={logLines} paused={logPaused} onTogglePause={() => setLogPaused(p => !p)} />
     </div>
   )
 }

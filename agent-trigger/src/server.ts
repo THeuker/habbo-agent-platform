@@ -491,6 +491,19 @@ const server = Bun.serve({
       return Response.json({ ok: true, activeTeam });
     }
 
+    // ── Log tail ──────────────────────────────────────────────────────────────
+    if (url.pathname === "/logs") {
+      try {
+        const lines = Math.min(parseInt(url.searchParams.get("lines") ?? "100"), 500);
+        if (!existsSync(LOG_FILE)) return Response.json({ ok: true, lines: [] });
+        const raw = readFileSync(LOG_FILE, "utf-8").trimEnd();
+        const all = raw.length ? raw.split("\n") : [];
+        return Response.json({ ok: true, lines: all.slice(-lines) });
+      } catch (e: any) {
+        return Response.json({ ok: false, lines: [], error: e.message });
+      }
+    }
+
     // ── MCP config status ────────────────────────────────────────────────────
     if (url.pathname === "/mcp-status") {
       try {

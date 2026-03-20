@@ -1498,6 +1498,15 @@ app.post('/api/agents/stop', authRequired, async (req, res) => {
   } catch (err) { res.status(502).json({ error: 'Agent trigger unavailable' }); }
 });
 
+app.get('/api/agents/logs', authRequired, async (req, res) => {
+  try {
+    const lines = Math.min(parseInt(req.query.lines ?? '150'), 500);
+    const r = await fetch(`${AGENT_TRIGGER_URL}/logs?lines=${lines}`);
+    const data = await r.json().catch(() => ({ ok: false, lines: [] }));
+    res.json(data);
+  } catch (err) { res.json({ ok: false, lines: [], error: 'Agent trigger unavailable' }); }
+});
+
 // ── Agent Flows ─────────────────────────────────────────────────────────────
 
 app.get('/api/agents/flows', authRequired, async (req, res) => {
