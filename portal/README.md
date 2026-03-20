@@ -59,7 +59,20 @@ SHOW COLUMNS FROM permissions LIKE 'cmd_set_ai_key';
 
 If that returns empty the `habbo-ai-service` container hasn't run its migrations yet — make sure it started successfully with `just doctor` or `docker compose logs habbo-ai-service`.
 
-**In-room command flow once permissions are correct:**
+### What requires an API key and what doesn't
+
+Not everything needs an Anthropic/OpenAI API key. Here's the breakdown:
+
+| Action | Needs API key? | Notes |
+|---|---|---|
+| Team trigger (portal button) | **No** | Uses MCP `deploy_bot` → RCON, no AI service involved |
+| `deploy_bot` MCP tool | **No** | Direct RCON to emulator |
+| `:setup_agent` in-room command | **Yes** | Spawns bot + wires it to habbo-ai-service for visitor chat |
+| Bot responding to room chat | **Yes** | habbo-ai-service calls Claude/GPT per message |
+
+**In short:** to deploy bots via the portal or MCP you only need rank 7. The API key is only required if you want hotel visitors to chat directly with a bot (using the in-room `:setup_agent` command).
+
+**In-room command flow (visitor chat bots):**
 
 ```
 :set_ai_key sk-ant-api01...                            # register + verify Anthropic key
