@@ -23,8 +23,8 @@ This is the main selling point: show your own agents/subagents in the hosted ret
 git clone https://github.com/tndejong/habbo-hooks-client.git
 cd habbo-hooks-client
 
-# set once in your shell session
-export HABBO_HOOK_TRANSPORT=remote
+# set once in your shell session (auto = tries hosted first, falls back to local)
+export HABBO_HOOK_TRANSPORT=auto
 export MCP_API_KEY="<your-pro-token>"
 
 # choose one installer
@@ -152,10 +152,10 @@ Underlying domain scripts:
 - Claude: `hooks/claude/install.sh`
 - Cursor: `hooks/cursor/install.sh`
 
-Use remote mode for hosted usage:
+Recommended defaults (works for both hosted and local):
 
 ```bash
-HABBO_HOOK_TRANSPORT=remote
+HABBO_HOOK_TRANSPORT=auto
 HABBO_HOOK_REMOTE_BASE_URL=https://hotel-mcp.fixdev.nl
 MCP_API_KEY=<your-token>
 ```
