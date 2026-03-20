@@ -186,8 +186,8 @@ const server = Bun.serve({
                 signal: AbortSignal.timeout(4000),
               });
               statusCode = r.status;
-              // MCP HTTP servers return 405 on GET (expects POST) — that's fine, server is up
-              reachable = r.ok || r.status === 405 || r.status === 401 || r.status === 400;
+              // Any HTTP response means the server is reachable — only timeout/ECONNREFUSED = down
+              reachable = true;
             } catch (e: any) {
               statusCode = null;
             }
