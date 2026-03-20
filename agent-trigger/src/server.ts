@@ -17,6 +17,20 @@ const STOP_FILE = "/tmp/hotel-team-stop";
 const LOG_FILE = "/tmp/hotel-team.log";
 const NARRATOR_BOTS_MAP = "/tmp/hotel-narrator-bots.json";
 
+function writeNarratorBotsMap(knownBots: string[]): void {
+  try {
+    const existing = existsSync(NARRATOR_BOTS_MAP)
+      ? JSON.parse(readFileSync(NARRATOR_BOTS_MAP, 'utf-8'))
+      : {};
+    writeFileSync(NARRATOR_BOTS_MAP, JSON.stringify({
+      ...existing,
+      known_bots: knownBots,
+      sessions: existing.sessions ?? {},
+      pending: existing.pending ?? [],
+    }, null, 2));
+  } catch { /* non-fatal */ }
+}
+
 // ── MCP helper (used by narrator) ────────────────────────────────────────────
 
 const MCP_ENDPOINT = (() => {
@@ -160,6 +174,18 @@ interface TeamConfig {
   templates: RoomTemplate[];
 }
 
+interface RoleAssignments {
+  [role: string]: string; // e.g. { "researcher": "Tom", "planner": "Sander" }
+}
+
+interface PackConfig {
+  pack_id: number;
+  pack_source_url: string;
+  role_assignments: RoleAssignments;
+  room_id: number;
+  triggered_by: string;
+}
+
 async function fetchTeamConfig(teamId: number, flowId: number | null): Promise<TeamConfig> {
   const params = flowId ? `?flow_id=${flowId}` : "";
   const url = `${PORTAL_URL}/api/internal/teams/${teamId}/config${params}`;
@@ -200,6 +226,33 @@ ${templateNote(m.bot_name)}`).join("\n\n");
     .replaceAll("{{ROOM_ID}}", String(roomId))
     .replaceAll("{{TRIGGERED_BY}}", triggeredBy)
     .replaceAll("{{PERSONAS}}", memberSections + flowSection);
+}
+
+async function buildPromptFromPack(config: PackConfig): Promise<string> {
+  // 1. Fetch the remote orchestrator prompt
+  const res = await fetch(config.pack_source_url, {
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch pack prompt from ${config.pack_source_url} (${res.status})`);
+  }
+  const basePrompt = await res.text();
+
+  // 2. Build the role injection block
+  const botLines = Object.entries(config.role_assignments)
+    .map(([role, bot]) => `- ${role} → include "You are ${bot}, a Habbo Hotel bot" in the subagent's prompt`)
+    .join('\n');
+
+  const injectionBlock = `
+
+## Hotel Bot Assignments
+You are running inside Habbo Hotel room ${config.room_id}, triggered by ${config.triggered_by}.
+When spawning subagents, inject their hotel bot identity into each subagent prompt:
+${botLines}
+
+This ensures each agent is visually represented by their hotel bot in the room.`;
+
+  return basePrompt + injectionBlock;
 }
 
 function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string): Promise<string> {
@@ -413,12 +466,51 @@ const server = Bun.serve({
         return new Response("Forbidden", { status: 403 });
       }
 
-      let body: { team_id?: number; flow_id?: number | null; room_id?: number; triggered_by?: string; portal_url?: string };
+      let body: {
+        team_id?: number; flow_id?: number | null; room_id?: number; triggered_by?: string; portal_url?: string;
+        pack_source_url?: string; role_assignments?: Record<string, string>; pack_id?: number;
+      };
       try {
         body = await req.json();
       } catch {
         return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
       }
+
+      // Pack mode
+      if (body.pack_source_url && body.role_assignments) {
+        const packConfig: PackConfig = {
+          pack_id: Number(body.pack_id) || 0,
+          pack_source_url: body.pack_source_url,
+          role_assignments: body.role_assignments,
+          room_id: Number(body.room_id) || 202,
+          triggered_by: body.triggered_by ?? 'portal',
+        };
+
+        if (activeTeam) {
+          return Response.json({ ok: false, error: `Team already active in room ${activeTeam.roomId}. Stop it first.` }, { status: 409 });
+        }
+
+        let prompt: string;
+        try {
+          prompt = await buildPromptFromPack(packConfig);
+        } catch (err: any) {
+          log(`[trigger] Failed to build pack prompt: ${err.message}`);
+          return Response.json({ ok: false, error: err.message }, { status: 502 });
+        }
+
+        const knownBots = Object.values(packConfig.role_assignments).filter(Boolean);
+        writeNarratorBotsMap(knownBots);
+
+        activeTeam = { roomId: packConfig.room_id, startTime: new Date(), from: packConfig.triggered_by };
+        log(`[trigger] Pack ${packConfig.pack_id} started in room ${packConfig.room_id} by ${packConfig.triggered_by}`);
+
+        runOrchestratorWithPrompt(prompt, packConfig.room_id, packConfig.triggered_by)
+          .then((summary) => { activeTeam = null; log(`[trigger] Pack ${packConfig.pack_id} completed: ${summary.slice(0, 100)}`); })
+          .catch((err: Error) => { activeTeam = null; log(`[trigger] Pack ${packConfig.pack_id} error: ${err.message}`); });
+
+        return Response.json({ ok: true, message: `Pack launched in room ${packConfig.room_id}` });
+      }
+      // else fall through to existing team_id logic below
 
       const teamId = Number(body.team_id);
       const flowId = body.flow_id ? Number(body.flow_id) : null;
@@ -447,17 +539,8 @@ const server = Bun.serve({
       log(`[trigger] Team "${config.team.name}" started in room ${roomId} by ${triggeredBy}`);
 
       // Write known bot names so hotel_narrator.mjs can map subagent prompts → personas
-      try {
-        const knownBots = config.members.map(m => m.bot_name).filter(Boolean);
-        const existing = existsSync(NARRATOR_BOTS_MAP)
-          ? JSON.parse(readFileSync(NARRATOR_BOTS_MAP, "utf-8"))
-          : {};
-        writeFileSync(NARRATOR_BOTS_MAP, JSON.stringify({
-          ...existing,
-          known_bots: knownBots,
-          sessions: existing.sessions ?? {},
-        }, null, 2));
-      } catch { /* non-fatal */ }
+      const knownBots = config.members.map(m => m.bot_name).filter(Boolean);
+      writeNarratorBotsMap(knownBots);
 
       // Run in background
       runOrchestratorWithPrompt(prompt, roomId, triggeredBy)

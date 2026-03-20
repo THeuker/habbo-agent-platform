@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { HabboFigure } from './HabboFigure'
 import {
-  Users, Bot, Zap, Play, Square, Plus, Edit, Trash2,
-  ChevronRight, RefreshCw, ArrowUp, ArrowDown,
-  Check, X, Loader2, AlertCircle, AlertTriangle, Radio, MapPin
+  Bot, Package, Play, Edit2, Trash2, Plus, X, Check,
+  Loader2, AlertCircle, Users,
 } from 'lucide-react'
 
 // ── API helper ────────────────────────────────────────────────────────────
@@ -22,16 +21,11 @@ async function api(url, opts = {}) {
 // ── Main Dashboard Component ───────────────────────────────────────────────
 
 export function AgentDashboard({ me }) {
-  const isDev = me?.is_developer
-  const [tab, setTab] = useState('teams')
+  const [tab, setTab] = useState('packs')
 
   const tabs = [
-    { id: 'teams', label: 'Teams', icon: Users },
-    ...(isDev ? [
-      { id: 'personas', label: 'Personas', icon: Bot },
-      { id: 'flows', label: 'Flows', icon: Zap },
-    ] : []),
-    { id: 'trigger', label: 'Control', icon: Radio },
+    { id: 'packs', label: 'Packs', icon: Package },
+    { id: 'integrated', label: 'Integrated', icon: Users },
   ]
 
   return (
@@ -44,9 +38,7 @@ export function AgentDashboard({ me }) {
           </div>
           <div>
             <h1 className="font-semibold text-sm text-foreground">Agent Command Center</h1>
-            <p className="text-xs text-muted-foreground">
-              {isDev ? 'Developer Mode' : 'View Mode'}
-            </p>
+            <p className="text-xs text-muted-foreground">Orchestration Hub</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             {me?.figure && <HabboFigure figure={me.figure} size="sm" animate={false} />}
@@ -74,1268 +66,755 @@ export function AgentDashboard({ me }) {
 
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 py-6">
-        {tab === 'teams' && <TeamsView isDev={isDev} />}
-        {tab === 'personas' && isDev && <PersonasView />}
-        {tab === 'flows' && isDev && <FlowsView />}
-        {tab === 'trigger' && <ControlView isDev={isDev} />}
+        {tab === 'packs' && <PacksView />}
+        {tab === 'integrated' && <IntegratedView />}
       </div>
     </div>
   )
 }
 
-// ── Teams View ────────────────────────────────────────────────────────────
+// ── Packs View ────────────────────────────────────────────────────────────
 
-function TeamsView({ isDev }) {
-  const [teams, setTeams] = useState([])
+function PacksView() {
+  const [packs, setPacks] = useState([])
+  const [bots, setBots] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState(null)
-  const [editing, setEditing] = useState(null) // null | 'new' | team object
-  const [personas, setPersonas] = useState([])
-  const [flows, setFlows] = useState([])
+  const [error, setError] = useState(null)
+  const [showForm, setShowForm] = useState(false)
+  const [editingPack, setEditingPack] = useState(null) // null | pack object
+  const [runningIds, setRunningIds] = useState(new Set())
+  const [toast, setToast] = useState(null) // { msg, type }
 
   const load = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
-      const [td, pd, fd] = await Promise.all([
-        api('/api/agents/teams'),
-        api('/api/agents/personas'),
-        api('/api/agents/flows'),
+      const [pd, bd] = await Promise.all([
+        api('/api/agents/packs'),
+        api('/api/agents/bots'),
       ])
-      setTeams(td.teams || [])
-      setPersonas(pd.personas || [])
-      setFlows(fd.flows || [])
-    } catch(e) {} finally { setLoading(false) }
+      setPacks(pd.packs || [])
+      setBots(bd.bots || [])
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  async function loadTeamDetail(id) {
-    try {
-      const d = await api(`/api/agents/teams/${id}`)
-      setSelected(d.team)
-    } catch(e) {}
+  function showToast(msg, type = 'success') {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 3500)
   }
 
-  async function deleteTeam(id) {
-    if (!confirm('Delete this team?')) return
-    await api(`/api/agents/teams/${id}`, { method: 'DELETE' })
-    setSelected(null)
+  async function runPack(pack) {
+    setRunningIds(prev => new Set([...prev, pack.id]))
+    try {
+      await api(`/api/agents/packs/${pack.id}/trigger`, { method: 'POST' })
+      showToast(`Pack "${pack.name}" triggered successfully.`)
+    } catch (e) {
+      showToast(`Failed to run pack: ${e.message}`, 'error')
+    } finally {
+      setRunningIds(prev => {
+        const next = new Set(prev)
+        next.delete(pack.id)
+        return next
+      })
+    }
+  }
+
+  async function deletePack(pack) {
+    if (!confirm(`Delete pack "${pack.name}"?`)) return
+    // Optimistic remove
+    setPacks(prev => prev.filter(p => p.id !== pack.id))
+    try {
+      await api(`/api/agents/packs/${pack.id}`, { method: 'DELETE' })
+    } catch (e) {
+      showToast(`Delete failed: ${e.message}`, 'error')
+      load()
+    }
+  }
+
+  function openNewForm() {
+    setEditingPack(null)
+    setShowForm(true)
+  }
+
+  function openEditForm(pack) {
+    setEditingPack(pack)
+    setShowForm(true)
+  }
+
+  function closeForm() {
+    setShowForm(false)
+    setEditingPack(null)
+  }
+
+  async function savePack(data) {
+    if (editingPack) {
+      await api(`/api/agents/packs/${editingPack.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      })
+    } else {
+      await api('/api/agents/packs', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    }
+    closeForm()
     load()
   }
 
-  async function addMember(teamId, personaId) {
-    await api(`/api/agents/teams/${teamId}/members`, {
-      method: 'POST',
-      body: JSON.stringify({ persona_id: personaId })
-    })
-    loadTeamDetail(teamId)
-  }
-
-  async function removeMember(teamId, memberId) {
-    await api(`/api/agents/teams/${teamId}/members/${memberId}`, { method: 'DELETE' })
-    loadTeamDetail(teamId)
-  }
-
-  async function addFlow(teamId, flowId) {
-    await api(`/api/agents/teams/${teamId}/flows`, {
-      method: 'POST',
-      body: JSON.stringify({ flow_id: flowId })
-    })
-    loadTeamDetail(teamId)
-  }
-
-  async function removeFlow(teamId, flowId) {
-    await api(`/api/agents/teams/${teamId}/flows/${flowId}`, { method: 'DELETE' })
-    loadTeamDetail(teamId)
-  }
-
   if (loading) return <LoadingState />
-
-  if (editing !== null) {
-    return (
-      <TeamEditor
-        team={editing === 'new' ? null : editing}
-        onSave={async (data) => {
-          const method = editing === 'new' ? 'POST' : 'PUT'
-          const url = editing === 'new' ? '/api/agents/teams' : `/api/agents/teams/${editing.id}`
-          await api(url, { method, body: JSON.stringify(data) })
-          setEditing(null)
-          load()
-        }}
-        onCancel={() => setEditing(null)}
-      />
-    )
-  }
+  if (error) return <ErrorBanner message={error} onRetry={load} />
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      {/* Team list */}
-      <div className="md:col-span-1 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-foreground">Teams</h2>
-          {isDev && (
-            <button
-              onClick={() => setEditing('new')}
-              className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md hover:bg-primary/90 transition-colors"
-            >
-              <Plus className="w-3 h-3" /> New
-            </button>
-          )}
+    <div className="space-y-6">
+      {/* Toast */}
+      {toast && (
+        <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${
+          toast.type === 'error'
+            ? 'bg-destructive/10 border border-destructive/30 text-destructive'
+            : 'bg-green-500/10 border border-green-500/30 text-green-400'
+        }`}>
+          {toast.type === 'error' ? <AlertCircle className="w-4 h-4 flex-shrink-0" /> : <Check className="w-4 h-4 flex-shrink-0" />}
+          {toast.msg}
         </div>
-
-        {teams.length === 0 ? (
-          <EmptyState
-            icon={Users}
-            title="No teams yet"
-            description={isDev ? "Create your first team to get started" : "No teams available"}
-          />
-        ) : (
-          teams.map(team => (
-            <div
-              key={team.id}
-              onClick={() => loadTeamDetail(team.id)}
-              className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                selected?.id === team.id
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border bg-card hover:border-border/80 hover:bg-card/80'
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-medium text-sm text-foreground">{team.name}</p>
-                  {team.description && (
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{team.description}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {team.member_count} {team.member_count === 1 ? 'agent' : 'agents'}
-                  </p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Team detail */}
-      <div className="md:col-span-2">
-        {selected ? (
-          <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="font-semibold text-lg text-foreground">{selected.name}</h2>
-                {selected.description && (
-                  <p className="text-sm text-muted-foreground mt-1">{selected.description}</p>
-                )}
-              </div>
-              {isDev && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setEditing(selected)}
-                    className="flex items-center gap-1.5 text-xs border border-border px-3 py-1.5 rounded-md hover:bg-secondary transition-colors"
-                  >
-                    <Edit className="w-3 h-3" /> Edit
-                  </button>
-                  <button
-                    onClick={() => deleteTeam(selected.id)}
-                    className="flex items-center gap-1.5 text-xs border border-destructive/30 text-destructive px-3 py-1.5 rounded-md hover:bg-destructive/10 transition-colors"
-                  >
-                    <Trash2 className="w-3 h-3" /> Delete
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Members */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-foreground">Agents</h3>
-                {isDev && (
-                  <PersonaSelector
-                    personas={personas}
-                    existingIds={(selected.members || []).map(m => m.persona_id)}
-                    onSelect={(pId) => addMember(selected.id, pId)}
-                  />
-                )}
-              </div>
-
-              {(selected.members || []).length === 0 ? (
-                <p className="text-xs text-muted-foreground">No agents in this team</p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {(selected.members || []).map(member => (
-                    <MemberCard
-                      key={member.id}
-                      member={member}
-                      isDev={isDev}
-                      onRemove={() => removeMember(selected.id, member.id)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Flows */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-foreground">Linked Flows</h3>
-                {isDev && (
-                  <FlowSelector
-                    flows={flows}
-                    existingIds={(selected.flows || []).map(f => f.id)}
-                    onSelect={(fId) => addFlow(selected.id, fId)}
-                  />
-                )}
-              </div>
-              {(selected.flows || []).length === 0 ? (
-                <p className="text-xs text-muted-foreground">No flows linked</p>
-              ) : (
-                <div className="space-y-2">
-                  {(selected.flows || []).map(flow => (
-                    <div key={flow.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-card/50">
-                      <div>
-                        <p className="text-sm font-medium">{flow.name}</p>
-                        {flow.description && <p className="text-xs text-muted-foreground">{flow.description}</p>}
-                      </div>
-                      {isDev && (
-                        <button onClick={() => removeFlow(selected.id, flow.id)} className="text-muted-foreground hover:text-destructive transition-colors">
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Bot assignment validation */}
-            {(selected.members || []).some(m => !m.bot_name?.trim()) && (
-              <div className="flex items-start gap-2.5 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5 text-yellow-400 text-xs">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                <span>
-                  Some agents have no bot linked. The team cannot be launched until all agents have a bot assigned. Go to <strong>Personas</strong> tab to fix this.
-                </span>
-              </div>
-            )}
-
-            {/* Room Templates */}
-            <RoomTemplatesSection teamId={selected.id} isDev={isDev} members={selected.members || []} />
-          </div>
-        ) : (
-          <EmptyState
-            icon={Users}
-            title="Select a team"
-            description="Click a team on the left to view details"
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Member Card ───────────────────────────────────────────────────────────
-
-function MemberCard({ member, isDev, onRemove }) {
-  const missingBot = !member.bot_name?.trim()
-  return (
-    <div className={`flex items-center gap-3 p-3 rounded-xl border bg-card ${missingBot ? 'border-yellow-500/40' : 'border-border'}`}>
-      <HabboFigure figure={null} size="sm" animate={true} />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{member.name}</p>
-        {missingBot ? (
-          <p className="text-xs text-yellow-500 flex items-center gap-1 mt-0.5">
-            <AlertTriangle className="w-3 h-3" /> No bot linked
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">Bot: {member.bot_name}</p>
-        )}
-        {member.role && (
-          <span className="inline-block mt-1 text-xs bg-accent/10 text-accent-foreground px-2 py-0.5 rounded-full">
-            {member.role}
-          </span>
-        )}
-      </div>
-      {isDev && (
-        <button onClick={onRemove} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
-          <X className="w-4 h-4" />
-        </button>
       )}
-    </div>
-  )
-}
 
-// ── Team Editor ───────────────────────────────────────────────────────────
-
-function TeamEditor({ team, onSave, onCancel }) {
-  const [form, setForm] = useState({
-    name: team?.name || '',
-    description: team?.description || '',
-    orchestrator_prompt: team?.orchestrator_prompt || DEFAULT_ORCHESTRATOR_PROMPT,
-  })
-  const [saving, setSaving] = useState(false)
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    setSaving(true)
-    try { await onSave(form) } finally { setSaving(false) }
-  }
-
-  return (
-    <div className="max-w-2xl space-y-6">
-      <div className="flex items-center gap-3">
-        <button onClick={onCancel} className="text-muted-foreground hover:text-foreground transition-colors">
-          <X className="w-5 h-5" />
-        </button>
-        <h2 className="font-semibold text-lg">{team ? 'Edit Team' : 'New Team'}</h2>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Team Name</label>
-          <input
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            placeholder="e.g. Sprint Team, Marketing Crew"
-            required
-            value={form.name}
-            onChange={e => setForm(f => ({...f, name: e.target.value}))}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Description</label>
-          <input
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            placeholder="What does this team do?"
-            value={form.description}
-            onChange={e => setForm(f => ({...f, description: e.target.value}))}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Orchestrator Prompt</label>
-          <p className="text-xs text-muted-foreground">
-            Use {`{{ROOM_ID}}`}, {`{{TRIGGERED_BY}}`}, and {`{{PERSONA_NAME_PERSONA}}`} as placeholders
-          </p>
-          <textarea
-            className="flex min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono"
-            value={form.orchestrator_prompt}
-            onChange={e => setForm(f => ({...f, orchestrator_prompt: e.target.value}))}
-          />
-        </div>
-
-        <div className="flex gap-3 pt-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex-1 h-9 rounded-md border border-input text-sm hover:bg-secondary transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex-1 h-9 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {team ? 'Update Team' : 'Create Team'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-const DEFAULT_ORCHESTRATOR_PROMPT = `You are the orchestrator for a Habbo Hotel agent team.
-Target room: {{ROOM_ID}}
-Triggered by: {{TRIGGERED_BY}}
-
-Use the Agent tool to launch all agents CONCURRENTLY in a single message.
-
-{{PERSONAS}}
-
-Launch all agents simultaneously now.`
-
-// ── Personas View ─────────────────────────────────────────────────────────
-
-function PersonasView() {
-  const [personas, setPersonas] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState(null)
-  const [figureTypes, setFigureTypes] = useState([])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [pd, fd] = await Promise.all([
-        api('/api/agents/personas'),
-        api('/api/figure-types').catch(() => ({ figureTypes: [] }))
-      ])
-      setPersonas(pd.personas || [])
-      setFigureTypes(fd.figureTypes || [])
-    } finally { setLoading(false) }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  async function deletePersona(id) {
-    if (!confirm('Delete this persona?')) return
-    await api(`/api/agents/personas/${id}`, { method: 'DELETE' })
-    load()
-  }
-
-  if (loading) return <LoadingState />
-
-  if (editing !== null) {
-    return (
-      <PersonaEditor
-        persona={editing === 'new' ? null : editing}
-        figureTypes={figureTypes}
-        onSave={async (data) => {
-          const method = editing === 'new' ? 'POST' : 'PUT'
-          const url = editing === 'new' ? '/api/agents/personas' : `/api/agents/personas/${editing.id}`
-          await api(url, { method, body: JSON.stringify(data) })
-          setEditing(null)
-          load()
-        }}
-        onCancel={() => setEditing(null)}
-      />
-    )
-  }
-
-  return (
-    <div className="space-y-4">
+      {/* Toolbar */}
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-foreground">Agent Personas</h2>
-        <button
-          onClick={() => setEditing('new')}
-          className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="w-3 h-3" /> New Persona
-        </button>
+        <h2 className="font-semibold text-foreground">Packs</h2>
+        {!showForm && (
+          <button
+            onClick={openNewForm}
+            className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md hover:bg-primary/90 transition-colors"
+          >
+            <Plus className="w-3 h-3" /> Add Pack
+          </button>
+        )}
       </div>
 
-      {personas.length === 0 ? (
-        <EmptyState icon={Bot} title="No personas yet" description="Create your first agent persona" />
+      {/* Inline form */}
+      {showForm && (
+        <PackForm
+          pack={editingPack}
+          bots={bots}
+          onSave={savePack}
+          onCancel={closeForm}
+        />
+      )}
+
+      {/* Cards grid */}
+      {packs.length === 0 && !showForm ? (
+        <EmptyState icon={Package} title="No packs yet" description="Create your first pack to get started" />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {personas.map(persona => (
-            <div key={persona.id} className="p-4 rounded-xl border border-border bg-card space-y-3">
-              <div className="flex items-start gap-3">
-                <HabboFigure figure={null} size="sm" animate={true} />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">{persona.name}</p>
-                  {persona.description && (
-                    <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{persona.description}</p>
-                  )}
-                  {persona.bot_name && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      <span className="text-cyan-400">Bot:</span> {persona.bot_name}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setEditing(persona)}
-                  className="flex-1 flex items-center justify-center gap-1.5 h-7 text-xs border border-border rounded-md hover:bg-secondary transition-colors"
-                >
-                  <Edit className="w-3 h-3" /> Edit
-                </button>
-                <button
-                  onClick={() => deletePersona(persona.id)}
-                  className="flex items-center justify-center h-7 w-7 border border-destructive/30 text-destructive rounded-md hover:bg-destructive/10 transition-colors"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {packs.map(pack => (
+            <PackCard
+              key={pack.id}
+              pack={pack}
+              running={runningIds.has(pack.id)}
+              onRun={() => runPack(pack)}
+              onEdit={() => openEditForm(pack)}
+              onDelete={() => deletePack(pack)}
+            />
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Pack Card ─────────────────────────────────────────────────────────────
+
+function PackCard({ pack, running, onRun, onEdit, onDelete }) {
+  const sourceDisplay = pack.pack_source_url
+    ? pack.pack_source_url.length > 40
+      ? pack.pack_source_url.slice(0, 37) + '...'
+      : pack.pack_source_url
+    : null
+
+  const assignments = Array.isArray(pack.role_assignments) ? pack.role_assignments : []
+
+  return (
+    <div className="relative flex flex-col gap-3 p-4 rounded-xl border border-border bg-card">
+      {/* Edit / Delete buttons top-right */}
+      <div className="absolute top-3 right-3 flex gap-1">
+        <button
+          onClick={onEdit}
+          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          title="Edit pack"
+        >
+          <Edit2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={onDelete}
+          className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+          title="Delete pack"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Top */}
+      <div className="flex items-start gap-3 pr-16">
+        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+          <Package className="w-4 h-4 text-primary" />
+        </div>
+        <div className="min-w-0">
+          <p className="font-semibold text-sm text-foreground">{pack.name}</p>
+          {pack.description && (
+            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{pack.description}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Source */}
+      {sourceDisplay && (
+        <div className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/60 mr-1">Source</span>
+          <span className="font-mono">{sourceDisplay}</span>
+        </div>
+      )}
+
+      {/* Role assignments */}
+      {assignments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {assignments.map((a, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full"
+            >
+              <span className="text-muted-foreground">{a.role}</span>
+              <span className="text-muted-foreground">→</span>
+              <span className="font-medium">{a.bot_name}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Room badge */}
+      {pack.room_id && (
+        <div>
+          <span className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">
+            Room {pack.room_id}
+          </span>
+        </div>
+      )}
+
+      {/* Run button */}
+      <button
+        onClick={onRun}
+        disabled={running}
+        className="mt-auto flex items-center justify-center gap-1.5 text-xs bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+      >
+        {running ? (
+          <>
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Running...
+          </>
+        ) : (
+          <>
+            <Play className="w-3.5 h-3.5" /> Run
+          </>
+        )}
+      </button>
+    </div>
+  )
+}
+
+// ── Pack Form ─────────────────────────────────────────────────────────────
+
+function PackForm({ pack, bots, onSave, onCancel }) {
+  const [name, setName] = useState(pack?.name || '')
+  const [description, setDescription] = useState(pack?.description || '')
+  const [roomId, setRoomId] = useState(pack?.room_id ?? 202)
+  const [sourceUrl, setSourceUrl] = useState(pack?.pack_source_url || '')
+  const [assignments, setAssignments] = useState(
+    Array.isArray(pack?.role_assignments) && pack.role_assignments.length > 0
+      ? pack.role_assignments.map(a => ({ role: a.role || '', bot_name: a.bot_name || '' }))
+      : [{ role: '', bot_name: '' }]
+  )
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  function addAssignment() {
+    setAssignments(prev => [...prev, { role: '', bot_name: '' }])
+  }
+
+  function removeAssignment(i) {
+    setAssignments(prev => prev.filter((_, idx) => idx !== i))
+  }
+
+  function updateAssignment(i, field, value) {
+    setAssignments(prev => prev.map((a, idx) => idx === i ? { ...a, [field]: value } : a))
+  }
+
+  async function handleSave() {
+    if (!name.trim()) { setFormError('Name is required'); return }
+    setSaving(true)
+    setFormError(null)
+    try {
+      await onSave({
+        name: name.trim(),
+        description: description.trim(),
+        room_id: Number(roomId),
+        pack_source_url: sourceUrl.trim(),
+        role_assignments: assignments.filter(a => a.role.trim()),
+      })
+    } catch (e) {
+      setFormError(e.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+      <h3 className="font-semibold text-sm text-foreground">{pack ? 'Edit Pack' : 'New Pack'}</h3>
+
+      {formError && (
+        <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 px-3 py-2 rounded-lg">
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {formError}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Name</label>
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="My Pack"
+            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Room ID</label>
+          <input
+            type="number"
+            value={roomId}
+            onChange={e => setRoomId(e.target.value)}
+            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-foreground">Description</label>
+        <input
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="What does this pack do?"
+          className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-foreground">Pack Source URL</label>
+        <input
+          value={sourceUrl}
+          onChange={e => setSourceUrl(e.target.value)}
+          placeholder="https://raw.githubusercontent.com/.../orchestrator.md"
+          className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+        />
+      </div>
+
+      {/* Role assignments */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-foreground">Role Assignments</label>
+        {assignments.map((a, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              value={a.role}
+              onChange={e => updateAssignment(i, 'role', e.target.value)}
+              placeholder="researcher"
+              className="flex-1 text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+            <span className="text-muted-foreground text-sm flex-shrink-0">→</span>
+            <select
+              value={a.bot_name}
+              onChange={e => updateAssignment(i, 'bot_name', e.target.value)}
+              className="flex-1 text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              <option value="">Select bot…</option>
+              {bots.map(b => (
+                <option key={b.id ?? b.name} value={b.name}>{b.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => removeAssignment(i)}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex-shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+        <button
+          onClick={addAssignment}
+          className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+        >
+          <Plus className="w-3 h-3" /> Add Role
+        </button>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="text-xs border border-border px-4 py-2 rounded-md hover:bg-secondary transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Integrated View ───────────────────────────────────────────────────────
+
+function IntegratedView() {
+  const [personas, setPersonas] = useState([])
+  const [bots, setBots] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [showForm, setShowForm] = useState(false)
+  const [editingPersona, setEditingPersona] = useState(null) // null | persona object
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [pd, bd] = await Promise.all([
+        api('/api/agents/personas'),
+        api('/api/agents/bots'),
+      ])
+      setPersonas(pd.personas || [])
+      setBots(bd.bots || [])
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  async function deletePersona(persona) {
+    if (!confirm(`Delete agent "${persona.name}"?`)) return
+    setPersonas(prev => prev.filter(p => p.id !== persona.id))
+    try {
+      await api(`/api/agents/personas/${persona.id}`, { method: 'DELETE' })
+    } catch (e) {
+      load()
+    }
+  }
+
+  function openNewForm() {
+    setEditingPersona(null)
+    setShowForm(true)
+  }
+
+  function openEditForm(persona) {
+    setEditingPersona(persona)
+    setShowForm(true)
+  }
+
+  function closeForm() {
+    setShowForm(false)
+    setEditingPersona(null)
+  }
+
+  async function savePersona(data) {
+    if (editingPersona) {
+      await api(`/api/agents/personas/${editingPersona.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      })
+    } else {
+      await api('/api/agents/personas', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    }
+    closeForm()
+    load()
+  }
+
+  if (loading) return <LoadingState />
+  if (error) return <ErrorBanner message={error} onRetry={load} />
+
+  return (
+    <div className="space-y-6">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold text-foreground">Integrated Agents</h2>
+        {!showForm && (
+          <button
+            onClick={openNewForm}
+            className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md hover:bg-primary/90 transition-colors"
+          >
+            <Plus className="w-3 h-3" /> Add Agent
+          </button>
+        )}
+      </div>
+
+      {/* Inline form */}
+      {showForm && (
+        <PersonaEditor
+          persona={editingPersona}
+          bots={bots}
+          onSave={savePersona}
+          onCancel={closeForm}
+        />
+      )}
+
+      {/* List */}
+      {personas.length === 0 && !showForm ? (
+        <EmptyState icon={Users} title="No agents yet" description="Add your first integrated agent to get started" />
+      ) : (
+        <div className="space-y-3">
+          {personas.map(persona => (
+            <PersonaCard
+              key={persona.id}
+              persona={persona}
+              onEdit={() => openEditForm(persona)}
+              onDelete={() => deletePersona(persona)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Persona Card ──────────────────────────────────────────────────────────
+
+function PersonaCard({ persona, onEdit, onDelete }) {
+  return (
+    <div className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card">
+      {/* Avatar */}
+      <HabboFigure figure={persona.figure || null} size="md" animate={true} />
+
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-sm text-foreground">{persona.name}</p>
+        {persona.role && (
+          <p className="text-xs text-muted-foreground mt-0.5">{persona.role}</p>
+        )}
+        {(persona.prompt || persona.description || persona.motto) && (
+          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+            {persona.prompt || persona.description || persona.motto}
+          </p>
+        )}
+      </div>
+
+      {/* Badges */}
+      <div className="flex flex-col items-end gap-2 flex-shrink-0">
+        {persona.bot_name && (
+          <span className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">
+            {persona.bot_name}
+          </span>
+        )}
+        {persona.room_id && (
+          <span className="inline-flex items-center text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
+            Room {persona.room_id}
+          </span>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-1 flex-shrink-0">
+        <button
+          onClick={onEdit}
+          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          title="Edit agent"
+        >
+          <Edit2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={onDelete}
+          className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+          title="Delete agent"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
     </div>
   )
 }
 
 // ── Persona Editor ────────────────────────────────────────────────────────
 
-function PersonaEditor({ persona, figureTypes, onSave, onCancel }) {
-  const [form, setForm] = useState({
-    name: persona?.name || '',
-    description: persona?.description || '',
-    prompt: persona?.prompt || '',
-    figure_type: persona?.figure_type || 'agent-m',
-    bot_name: persona?.bot_name || '',
-  })
-  const [preview, setPreview] = useState(false)
+function PersonaEditor({ persona, bots, onSave, onCancel }) {
+  const [name, setName] = useState(persona?.name || '')
+  const [role, setRole] = useState(persona?.role || '')
+  const [prompt, setPrompt] = useState(persona?.prompt || persona?.description || '')
+  const [botName, setBotName] = useState(persona?.bot_name || '')
+  const [figure, setFigure] = useState(persona?.figure || '')
   const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState(null)
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function handleSave() {
+    if (!name.trim()) { setFormError('Name is required'); return }
     setSaving(true)
-    try { await onSave(form) } finally { setSaving(false) }
-  }
-
-  return (
-    <div className="max-w-2xl space-y-6">
-      <div className="flex items-center gap-3">
-        <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
-          <X className="w-5 h-5" />
-        </button>
-        <h2 className="font-semibold text-lg">{persona ? 'Edit Persona' : 'New Persona'}</h2>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Name</label>
-            <input
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              placeholder="e.g. Tom, Sander"
-              required
-              value={form.name}
-              onChange={e => setForm(f => ({...f, name: e.target.value}))}
-            />
-          </div>
-          <BotNamePicker value={form.bot_name} onChange={v => setForm(f => ({...f, bot_name: v}))} />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Description</label>
-          <input
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            placeholder="Short description of this agent"
-            value={form.description}
-            onChange={e => setForm(f => ({...f, description: e.target.value}))}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Figure Type</label>
-          <select
-            className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            value={form.figure_type}
-            onChange={e => setForm(f => ({...f, figure_type: e.target.value}))}
-          >
-            {(figureTypes.length ? figureTypes : DEFAULT_FIGURE_TYPES).map(ft => (
-              <option key={ft.type || ft} value={ft.type || ft}>{ft.type || ft}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium">Persona Prompt</label>
-            <button
-              type="button"
-              onClick={() => setPreview(p => !p)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {preview ? 'Edit' : 'Preview'}
-            </button>
-          </div>
-          {preview ? (
-            <pre className="min-h-[200px] w-full rounded-md border border-border bg-muted p-3 text-xs font-mono overflow-auto whitespace-pre-wrap">
-              {form.prompt || '(empty)'}
-            </pre>
-          ) : (
-            <textarea
-              className="flex min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring"
-              placeholder="Describe the agent's personality, goals, and behavior..."
-              value={form.prompt}
-              onChange={e => setForm(f => ({...f, prompt: e.target.value}))}
-            />
-          )}
-        </div>
-
-        <div className="flex gap-3 pt-2">
-          <button type="button" onClick={onCancel}
-            className="flex-1 h-9 rounded-md border border-input text-sm hover:bg-secondary transition-colors">
-            Cancel
-          </button>
-          <button type="submit" disabled={saving}
-            className="flex-1 h-9 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {persona ? 'Update' : 'Create'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-function BotNamePicker({ value, onChange }) {
-  const [bots, setBots] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    api('/api/agents/bots')
-      .then(d => setBots(d.bots || []))
-      .catch(() => setBots([]))
-      .finally(() => setLoading(false))
-  }, [])
-
-  if (loading) return (
-    <div className="space-y-1.5">
-      <label className="text-sm font-medium">Hotel Bot Name</label>
-      <div className="flex h-9 items-center px-3 rounded-md border border-input text-xs text-muted-foreground">Loading bots…</div>
-    </div>
-  )
-
-  // Always allow free text fallback even if bots list is available
-  return (
-    <div className="space-y-1.5">
-      <label className="text-sm font-medium">Hotel Bot</label>
-      {bots.length > 0 ? (
-        <div className="space-y-1">
-          <select
-            className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            value={bots.some(b => b.name === value) ? value : '__custom__'}
-            onChange={e => {
-              if (e.target.value === '__custom__') return
-              if (e.target.value === '') onChange('')
-              else onChange(e.target.value)
-            }}
-          >
-            <option value="">— No bot linked —</option>
-            {bots.map(b => (
-              <option key={b.id} value={b.name}>
-                {b.name}{b.room_id > 0 ? ` (room ${b.room_id})` : ' (offline)'}
-              </option>
-            ))}
-            {value && !bots.some(b => b.name === value) && (
-              <option value="__custom__">{value} (manual)</option>
-            )}
-          </select>
-          {!value && (
-            <p className="text-xs text-yellow-500 flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" /> No bot linked — team cannot launch without a bot
-            </p>
-          )}
-          {value && !bots.some(b => b.name === value) && (
-            <input
-              className="flex h-8 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              value={value}
-              onChange={e => onChange(e.target.value)}
-              placeholder="Bot name (not in list)"
-            />
-          )}
-        </div>
-      ) : (
-        <input
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-          placeholder="Name of bot in hotel"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-        />
-      )}
-    </div>
-  )
-}
-
-const DEFAULT_FIGURE_TYPES = ['agent-m', 'agent-f', 'citizen-m', 'citizen-f', 'bouncer', 'employee-m', 'employee-f']
-
-// ── Flows View ────────────────────────────────────────────────────────────
-
-function FlowsView() {
-  const [flows, setFlows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
+    setFormError(null)
     try {
-      const d = await api('/api/agents/flows')
-      setFlows(d.flows || [])
-    } finally { setLoading(false) }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  if (loading) return <LoadingState />
-
-  if (editing !== null) {
-    return (
-      <FlowEditor
-        flow={editing === 'new' ? null : editing}
-        onSave={async (data) => {
-          const method = editing === 'new' ? 'POST' : 'PUT'
-          const url = editing === 'new' ? '/api/agents/flows' : `/api/agents/flows/${editing.id}`
-          await api(url, { method, body: JSON.stringify(data) })
-          setEditing(null)
-          load()
-        }}
-        onCancel={() => setEditing(null)}
-      />
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold">Flows</h2>
-        <button onClick={() => setEditing('new')}
-          className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md hover:bg-primary/90">
-          <Plus className="w-3 h-3" /> New Flow
-        </button>
-      </div>
-
-      {flows.length === 0 ? (
-        <EmptyState icon={Zap} title="No flows yet" description="Create task flows to assign to teams" />
-      ) : (
-        <div className="space-y-3">
-          {flows.map(flow => {
-            const tasks = safeJson(flow.tasks_json, [])
-            return (
-              <div key={flow.id} className="p-4 rounded-xl border border-border bg-card">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">{flow.name}</p>
-                    {flow.description && <p className="text-xs text-muted-foreground mt-0.5">{flow.description}</p>}
-                    <p className="text-xs text-muted-foreground mt-1">{tasks.length} tasks</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setEditing(flow)}
-                      className="h-7 px-3 text-xs border border-border rounded-md hover:bg-secondary transition-colors">
-                      Edit
-                    </button>
-                    <button onClick={async () => {
-                      if (!confirm('Delete flow?')) return
-                      await api(`/api/agents/flows/${flow.id}`, { method: 'DELETE' })
-                      load()
-                    }}
-                      className="h-7 w-7 flex items-center justify-center border border-destructive/30 text-destructive rounded-md hover:bg-destructive/10">
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Flow Editor ───────────────────────────────────────────────────────────
-
-function FlowEditor({ flow, onSave, onCancel }) {
-  const [form, setForm] = useState({
-    name: flow?.name || '',
-    description: flow?.description || '',
-    tasks_json: safeJson(flow?.tasks_json, []),
-  })
-  const [saving, setSaving] = useState(false)
-
-  function addTask() {
-    setForm(f => ({ ...f, tasks_json: [...f.tasks_json, { id: Date.now(), title: '', description: '' }] }))
-  }
-
-  function updateTask(index, updates) {
-    setForm(f => {
-      const tasks = [...f.tasks_json]
-      tasks[index] = { ...tasks[index], ...updates }
-      return { ...f, tasks_json: tasks }
-    })
-  }
-
-  function removeTask(index) {
-    setForm(f => ({ ...f, tasks_json: f.tasks_json.filter((_, i) => i !== index) }))
-  }
-
-  function moveTask(index, dir) {
-    setForm(f => {
-      const tasks = [...f.tasks_json]
-      const newIndex = index + dir
-      if (newIndex < 0 || newIndex >= tasks.length) return f;
-      [tasks[index], tasks[newIndex]] = [tasks[newIndex], tasks[index]]
-      return { ...f, tasks_json: tasks }
-    })
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    setSaving(true)
-    try { await onSave(form) } finally { setSaving(false) }
-  }
-
-  return (
-    <div className="max-w-2xl space-y-6">
-      <div className="flex items-center gap-3">
-        <button onClick={onCancel} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-        <h2 className="font-semibold text-lg">{flow ? 'Edit Flow' : 'New Flow'}</h2>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Flow Name</label>
-            <input className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              placeholder="e.g. Sprint Review, Marketing Analyse"
-              required value={form.name}
-              onChange={e => setForm(f => ({...f, name: e.target.value}))} />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Description</label>
-            <input className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              placeholder="What is this flow for?"
-              value={form.description}
-              onChange={e => setForm(f => ({...f, description: e.target.value}))} />
-          </div>
-        </div>
-
-        {/* Tasks */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium">Tasks</label>
-            <button type="button" onClick={addTask}
-              className="flex items-center gap-1 text-xs text-primary hover:text-primary/80">
-              <Plus className="w-3 h-3" /> Add task
-            </button>
-          </div>
-
-          {form.tasks_json.length === 0 ? (
-            <div className="text-center py-6 border border-dashed border-border rounded-lg">
-              <p className="text-xs text-muted-foreground">No tasks yet. Add your first task.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {form.tasks_json.map((task, i) => (
-                <div key={task.id || i} className="flex gap-2 p-3 rounded-lg border border-border bg-card/50">
-                  <div className="flex flex-col gap-1">
-                    <button type="button" onClick={() => moveTask(i, -1)} disabled={i === 0}
-                      className="h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30">
-                      <ArrowUp className="w-3 h-3" />
-                    </button>
-                    <span className="text-xs text-muted-foreground text-center">{i+1}</span>
-                    <button type="button" onClick={() => moveTask(i, 1)} disabled={i === form.tasks_json.length - 1}
-                      className="h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30">
-                      <ArrowDown className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <input className="flex h-7 w-full rounded border border-input bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                      placeholder="Task title"
-                      value={task.title}
-                      onChange={e => updateTask(i, { title: e.target.value })} />
-                    <textarea className="flex min-h-[50px] w-full rounded border border-input bg-transparent px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                      placeholder="Description (optional)"
-                      value={task.description}
-                      onChange={e => updateTask(i, { description: e.target.value })} />
-                  </div>
-                  <button type="button" onClick={() => removeTask(i)}
-                    className="text-muted-foreground hover:text-destructive self-start mt-1">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="flex gap-3 pt-2">
-          <button type="button" onClick={onCancel}
-            className="flex-1 h-9 rounded-md border border-input text-sm hover:bg-secondary transition-colors">Cancel</button>
-          <button type="submit" disabled={saving}
-            className="flex-1 h-9 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2">
-            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {flow ? 'Update Flow' : 'Create Flow'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-// ── Control View ──────────────────────────────────────────────────────────
-
-function ControlView({ isDev }) {
-  const [teams, setTeams] = useState([])
-  const [flows, setFlows] = useState([])
-  const [bots, setBots] = useState([])
-  const [mcpStatus, setMcpStatus] = useState(null)
-  const [status, setStatus] = useState(null)
-  const [form, setForm] = useState({ team_id: '', flow_id: '', room_id: '202' })
-  const [triggering, setTriggering] = useState(false)
-  const [msg, setMsg] = useState(null)
-
-  const loadStatus = useCallback(async () => {
-    try {
-      const d = await api('/api/agents/status')
-      setStatus(d.trigger)
-      setBots(d.bots || [])
-      setMcpStatus(d.mcp || null)
-    } catch(e) {}
-  }, [])
-
-  useEffect(() => {
-    api('/api/agents/teams').then(d => setTeams(d.teams || [])).catch(() => {})
-    api('/api/agents/flows').then(d => setFlows(d.flows || [])).catch(() => {})
-    loadStatus()
-    const id = setInterval(loadStatus, 5000)
-    return () => clearInterval(id)
-  }, [loadStatus])
-
-  async function handleTrigger(e) {
-    e.preventDefault()
-    setTriggering(true)
-    setMsg(null)
-    try {
-      await api(`/api/agents/teams/${form.team_id}/trigger`, {
-        method: 'POST',
-        body: JSON.stringify({ flow_id: form.flow_id || null, room_id: Number(form.room_id) })
+      await onSave({
+        name: name.trim(),
+        role: role.trim(),
+        prompt: prompt.trim(),
+        bot_name: botName,
+        figure: figure.trim(),
       })
-      setMsg({ type: 'success', text: 'Team launched! Check the hotel.' })
-      loadStatus()
-    } catch(err) {
-      setMsg({ type: 'error', text: err.message })
-    } finally { setTriggering(false) }
-  }
-
-  async function handleStop() {
-    try {
-      await api('/api/agents/stop', { method: 'POST' })
-      setMsg({ type: 'success', text: 'Stop signal sent.' })
-      setTimeout(loadStatus, 1000)
-    } catch(err) {
-      setMsg({ type: 'error', text: err.message })
+    } catch (e) {
+      setFormError(e.message)
+      setSaving(false)
     }
   }
 
-  const isActive = status?.activeTeam != null
-
   return (
-    <div className="space-y-6">
+    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+      <h3 className="font-semibold text-sm text-foreground">{persona ? 'Edit Agent' : 'New Agent'}</h3>
 
-    {/* MCP Connection status banner */}
-    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-sm">MCP Connections</h2>
-        <button onClick={loadStatus} className="text-muted-foreground hover:text-foreground transition-colors">
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
-      </div>
-      {!mcpStatus ? (
-        <p className="text-xs text-muted-foreground">Connecting to agent-trigger…</p>
-      ) : !mcpStatus.ok ? (
-        <div className="flex items-center gap-2 text-xs text-destructive">
-          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-          <span>{mcpStatus.error || 'agent-trigger offline — cannot read MCP config'}</span>
-        </div>
-      ) : mcpStatus.servers.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No MCP servers configured in .mcp.json</p>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          {mcpStatus.servers.map(srv => (
-            <div key={srv.name} className="flex items-start gap-2.5 p-3 rounded-lg border border-border bg-background">
-              <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${
-                srv.reachable ? 'bg-green-500' : 'bg-red-500'
-              }`} />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-foreground truncate">{srv.name}</p>
-                <p className="text-xs text-muted-foreground truncate">{srv.url}</p>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                    srv.reachable
-                      ? 'bg-green-500/10 text-green-400'
-                      : 'bg-red-500/10 text-red-400'
-                  }`}>
-                    {srv.reachable ? `HTTP ${srv.statusCode ?? '✓'}` : srv.statusCode ? `HTTP ${srv.statusCode}` : 'unreachable'}
-                  </span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                    srv.hasKey
-                      ? 'bg-blue-500/10 text-blue-400'
-                      : 'bg-yellow-500/10 text-yellow-400'
-                  }`}>
-                    {srv.hasKey ? `key: ${srv.keyPreview}` : 'no key'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+      {formError && (
+        <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 px-3 py-2 rounded-lg">
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {formError}
         </div>
       )}
-    </div>
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {/* Trigger panel */}
-      <div className="space-y-4">
-        <h2 className="font-semibold">Launch Team</h2>
-
-        {/* Status indicator */}
-        <div className={`flex items-center gap-3 p-4 rounded-xl border ${isActive ? 'border-green-500/30 bg-green-500/5' : 'border-border bg-card'}`}>
-          <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'}`} />
-          <div>
-            <p className="text-sm font-medium">
-              {isActive ? `Team active in room ${status.activeTeam.roomId}` : 'No active team'}
-            </p>
-            {isActive && (
-              <p className="text-xs text-muted-foreground">
-                Started by {status.activeTeam.from}
-              </p>
-            )}
-          </div>
-          {isActive && (
-            <button onClick={handleStop}
-              className="ml-auto flex items-center gap-1.5 h-7 px-3 text-xs bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90">
-              <Square className="w-3 h-3" /> Stop
-            </button>
-          )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Name</label>
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Agent name"
+            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
         </div>
-
-        {msg && (
-          <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${msg.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-destructive/10 text-destructive border border-destructive/20'}`}>
-            {msg.type === 'success' ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-            {msg.text}
-          </div>
-        )}
-
-        <form onSubmit={handleTrigger} className="space-y-3">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Team</label>
-            <select required value={form.team_id}
-              onChange={e => setForm(f => ({...f, team_id: e.target.value}))}
-              className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-              <option value="">Select a team...</option>
-              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Flow <span className="text-muted-foreground">(optional)</span></label>
-            <select value={form.flow_id}
-              onChange={e => setForm(f => ({...f, flow_id: e.target.value}))}
-              className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-              <option value="">No specific flow</option>
-              {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-            </select>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Room ID</label>
-            <input className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              type="number" value={form.room_id}
-              onChange={e => setForm(f => ({...f, room_id: e.target.value}))} />
-          </div>
-
-          <button type="submit" disabled={triggering || isActive}
-            className="w-full h-9 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2">
-            {triggering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            {triggering ? 'Launching...' : 'Launch Team'}
-          </button>
-        </form>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Role</label>
+          <input
+            value={role}
+            onChange={e => setRole(e.target.value)}
+            placeholder="e.g. researcher"
+            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+        </div>
       </div>
 
-      {/* Live bots */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Hotel Bots</h2>
-          <button onClick={loadStatus} className="text-muted-foreground hover:text-foreground transition-colors">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-foreground">Personality &amp; Instructions</label>
+        <textarea
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          placeholder="Describe this agent's personality, goals, and instructions…"
+          rows={4}
+          className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
+        />
+      </div>
 
-        {bots.length === 0 ? (
-          <EmptyState icon={Bot} title="No bots active" description="Bots will appear here when deployed" />
-        ) : (
-          <div className="space-y-2">
-            {bots.map(bot => (
-              <div key={bot.id} className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card">
-                <HabboFigure figure={bot.figure} size="sm" animate={bot.room_id > 0} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium truncate">{bot.name}</p>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${bot.room_id > 0 ? 'bg-green-500/10 text-green-400' : 'bg-muted text-muted-foreground'}`}>
-                      {bot.room_id > 0 ? `Room ${bot.room_id}` : 'Offline'}
-                    </span>
-                  </div>
-                  {bot.motto && <p className="text-xs text-muted-foreground truncate">{bot.motto}</p>}
-                </div>
-              </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Bot</label>
+          <select
+            value={botName}
+            onChange={e => setBotName(e.target.value)}
+            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            <option value="">Select bot…</option>
+            {bots.map(b => (
+              <option key={b.id ?? b.name} value={b.name}>{b.name}</option>
             ))}
-          </div>
-        )}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Habbo Figure</label>
+          <input
+            value={figure}
+            onChange={e => setFigure(e.target.value)}
+            placeholder="hr-115-42.hd-180-1.ch-…"
+            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+          />
+        </div>
       </div>
-    </div>
+
+      {/* Preview figure */}
+      {figure && (
+        <div className="flex items-center gap-3">
+          <HabboFigure figure={figure} size="md" animate={true} />
+          <p className="text-xs text-muted-foreground">Figure preview</p>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="text-xs border border-border px-4 py-2 rounded-md hover:bg-secondary transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   )
 }
 
-// ── Helper components ─────────────────────────────────────────────────────
+// ── Shared UI Primitives ──────────────────────────────────────────────────
 
 function LoadingState() {
   return (
-    <div className="flex items-center justify-center py-12">
-      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+    <div className="flex items-center justify-center py-20 text-muted-foreground">
+      <Loader2 className="w-6 h-6 animate-spin mr-2" />
+      <span className="text-sm">Loading…</span>
+    </div>
+  )
+}
+
+function ErrorBanner({ message, onRetry }) {
+  return (
+    <div className="flex items-center gap-3 p-4 rounded-xl border border-destructive/30 bg-destructive/5 text-destructive">
+      <AlertCircle className="w-5 h-5 flex-shrink-0" />
+      <div className="flex-1 text-sm">{message}</div>
+      {onRetry && (
+        <button
+          onClick={onRetry}
+          className="text-xs border border-destructive/40 px-3 py-1.5 rounded-md hover:bg-destructive/10 transition-colors flex-shrink-0"
+        >
+          Retry
+        </button>
+      )}
     </div>
   )
 }
 
 function EmptyState({ icon: Icon, title, description }) {
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
-      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
-        <Icon className="w-5 h-5 text-muted-foreground" />
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center mb-3">
+        <Icon className="w-6 h-6 text-muted-foreground" />
       </div>
-      <p className="text-sm font-medium text-foreground">{title}</p>
-      <p className="text-xs text-muted-foreground mt-1">{description}</p>
+      <p className="font-medium text-sm text-foreground">{title}</p>
+      {description && <p className="text-xs text-muted-foreground mt-1 max-w-xs">{description}</p>}
     </div>
   )
-}
-
-function PersonaSelector({ personas, existingIds, onSelect }) {
-  const available = personas.filter(p => !existingIds.includes(p.id))
-  if (available.length === 0) return null
-  return (
-    <select onChange={e => { if (e.target.value) { onSelect(Number(e.target.value)); e.target.value = '' }}}
-      className="h-7 text-xs rounded border border-input bg-card px-2 focus:outline-none focus:ring-1 focus:ring-ring">
-      <option value="">+ Add agent</option>
-      {available.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-    </select>
-  )
-}
-
-function FlowSelector({ flows, existingIds, onSelect }) {
-  const available = flows.filter(f => !existingIds.includes(f.id))
-  if (available.length === 0) return null
-  return (
-    <select onChange={e => { if (e.target.value) { onSelect(Number(e.target.value)); e.target.value = '' }}}
-      className="h-7 text-xs rounded border border-input bg-card px-2 focus:outline-none focus:ring-1 focus:ring-ring">
-      <option value="">+ Link flow</option>
-      {available.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-    </select>
-  )
-}
-
-// ── Room Templates Section ────────────────────────────────────────────────
-
-function RoomTemplatesSection({ teamId, isDev, members }) {
-  const [templates, setTemplates] = useState([])
-  const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ bot_name: '', room_id: '202', x: '0', y: '0', rot: '2' })
-  const [saving, setSaving] = useState(false)
-
-  const load = useCallback(async () => {
-    try {
-      const d = await api(`/api/agents/teams/${teamId}/templates`)
-      setTemplates(d.templates || [])
-    } catch {}
-  }, [teamId])
-
-  useEffect(() => { load() }, [load])
-
-  const botNames = [...new Set(members.filter(m => m.bot_name?.trim()).map(m => m.bot_name))]
-
-  async function handleAdd(e) {
-    e.preventDefault()
-    setSaving(true)
-    try {
-      await api(`/api/agents/teams/${teamId}/templates`, {
-        method: 'POST',
-        body: JSON.stringify({ ...form, room_id: Number(form.room_id), x: Number(form.x), y: Number(form.y), rot: Number(form.rot) })
-      })
-      setAdding(false)
-      setForm({ bot_name: '', room_id: '202', x: '0', y: '0', rot: '2' })
-      load()
-    } catch(err) { alert(err.message) } finally { setSaving(false) }
-  }
-
-  async function handleDelete(id) {
-    await api(`/api/agents/teams/${teamId}/templates/${id}`, { method: 'DELETE' })
-    load()
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-          <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> Room Templates
-        </h3>
-        {isDev && !adding && (
-          <button
-            onClick={() => setAdding(true)}
-            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-          >
-            <Plus className="w-3 h-3" /> Add
-          </button>
-        )}
-      </div>
-
-      {adding && (
-        <form onSubmit={handleAdd} className="mb-3 p-3 rounded-lg border border-border bg-card/50 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Bot</label>
-              {botNames.length > 0 ? (
-                <select required value={form.bot_name}
-                  onChange={e => setForm(f => ({...f, bot_name: e.target.value}))}
-                  className="flex h-7 w-full rounded border border-input bg-card px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring">
-                  <option value="">Select bot…</option>
-                  {botNames.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              ) : (
-                <input required value={form.bot_name}
-                  onChange={e => setForm(f => ({...f, bot_name: e.target.value}))}
-                  className="flex h-7 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                  placeholder="Bot name" />
-              )}
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Room ID</label>
-              <input type="number" required value={form.room_id}
-                onChange={e => setForm(f => ({...f, room_id: e.target.value}))}
-                className="flex h-7 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {[['x', 'X'], ['y', 'Y'], ['rot', 'Rot (0-7)']].map(([key, label]) => (
-              <div key={key} className="space-y-1">
-                <label className="text-xs text-muted-foreground">{label}</label>
-                <input type="number" value={form[key]}
-                  onChange={e => setForm(f => ({...f, [key]: e.target.value}))}
-                  className="flex h-7 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
-              </div>
-            ))}
-          </div>
-          <div className="flex gap-2 justify-end">
-            <button type="button" onClick={() => setAdding(false)}
-              className="h-6 px-2 text-xs border border-input rounded hover:bg-secondary transition-colors">Cancel</button>
-            <button type="submit" disabled={saving}
-              className="h-6 px-2 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1">
-              {saving && <Loader2 className="w-3 h-3 animate-spin" />} Save
-            </button>
-          </div>
-        </form>
-      )}
-
-      {templates.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          No room templates. {isDev ? 'Add templates to specify bot spawn coordinates per room.' : ''}
-        </p>
-      ) : (
-        <div className="space-y-1.5">
-          {templates.map(t => (
-            <div key={t.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-card/50 text-xs">
-              <div className="flex items-center gap-3">
-                <span className="font-medium text-foreground">{t.bot_name}</span>
-                <span className="text-muted-foreground">room {t.room_id}</span>
-                <span className="text-muted-foreground font-mono">x={t.x} y={t.y} rot={t.rot}</span>
-              </div>
-              {isDev && (
-                <button onClick={() => handleDelete(t.id)} className="text-muted-foreground hover:text-destructive transition-colors">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function safeJson(str, fallback = []) {
-  try { return typeof str === 'string' ? JSON.parse(str) : (str || fallback) }
-  catch { return fallback }
 }

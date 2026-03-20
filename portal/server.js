@@ -286,6 +286,9 @@ async function ensurePortalSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  await db.execute(`ALTER TABLE agent_teams ADD COLUMN IF NOT EXISTS pack_source_url TEXT;`);
+  await db.execute(`ALTER TABLE agent_teams ADD COLUMN IF NOT EXISTS role_assignments JSON;`);
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS agent_team_members (
       id INT NOT NULL AUTO_INCREMENT,
@@ -366,6 +369,22 @@ async function ensurePortalSchema() {
       PRIMARY KEY (id),
       UNIQUE KEY uq_team_bot_room (team_id, bot_name, room_id),
       CONSTRAINT fk_art_team FOREIGN KEY (team_id) REFERENCES agent_teams(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS agent_packs (
+      id INT NOT NULL AUTO_INCREMENT,
+      name VARCHAR(64) NOT NULL,
+      description VARCHAR(255) NOT NULL DEFAULT '',
+      room_id INT NOT NULL DEFAULT 202,
+      pack_source_url TEXT NOT NULL DEFAULT '',
+      role_assignments JSON NOT NULL DEFAULT ('{}'),
+      created_by_user_id INT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_pack_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 }
@@ -587,6 +606,20 @@ Launch now — all agents in ONE message.`;
   }
 
   console.log('Sprint Team seeded with Tom & Sander personas.');
+
+  const [[{ packCnt }]] = await db.execute('SELECT COUNT(*) AS packCnt FROM agent_packs');
+  if (packCnt === 0) {
+    await db.execute(
+      'INSERT IGNORE INTO agent_packs (name, description, room_id, pack_source_url, role_assignments) VALUES (?,?,?,?,?)',
+      [
+        'Sprint Team',
+        'Daily sprint review with Jira integration',
+        202,
+        'https://raw.githubusercontent.com/tndejong/habbo-agent-platform/main/agents/sprint-team.md',
+        JSON.stringify({ sprint_planner: 'Tom', issue_tracker: 'Sander' })
+      ]
+    );
+  }
 }
 
 async function createHabboUser(username) {
@@ -1211,11 +1244,11 @@ app.get('/api/agents/teams', authRequired, async (req, res) => {
 
 app.post('/api/agents/teams', authRequired, devRequired, async (req, res) => {
   try {
-    const { name, description, orchestrator_prompt } = req.body;
+    const { name, description, orchestrator_prompt, pack_source_url, role_assignments } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
     const [result] = await db.execute(
-      'INSERT INTO agent_teams (name, description, orchestrator_prompt, created_by_user_id) VALUES (?,?,?,?)',
-      [name.trim(), description || '', orchestrator_prompt || '', req.user.habbo_user_id]
+      'INSERT INTO agent_teams (name, description, orchestrator_prompt, pack_source_url, role_assignments, created_by_user_id) VALUES (?,?,?,?,?,?)',
+      [name.trim(), description || '', orchestrator_prompt || '', pack_source_url || null, role_assignments ? JSON.stringify(role_assignments) : null, req.user.habbo_user_id]
     );
     res.json({ ok: true, id: result.insertId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1242,10 +1275,10 @@ app.get('/api/agents/teams/:id', authRequired, async (req, res) => {
 
 app.put('/api/agents/teams/:id', authRequired, devRequired, async (req, res) => {
   try {
-    const { name, description, orchestrator_prompt } = req.body;
+    const { name, description, orchestrator_prompt, pack_source_url, role_assignments } = req.body;
     await db.execute(
-      'UPDATE agent_teams SET name=?, description=?, orchestrator_prompt=? WHERE id=?',
-      [name, description || '', orchestrator_prompt || '', req.params.id]
+      'UPDATE agent_teams SET name=?, description=?, orchestrator_prompt=?, pack_source_url=?, role_assignments=? WHERE id=?',
+      [name, description || '', orchestrator_prompt || '', pack_source_url || null, role_assignments ? JSON.stringify(role_assignments) : null, req.params.id]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1256,6 +1289,85 @@ app.delete('/api/agents/teams/:id', authRequired, devRequired, async (req, res) 
     await db.execute('DELETE FROM agent_teams WHERE id=?', [req.params.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Agent Packs ──────────────────────────────────────────────────────────────
+
+app.get('/api/agents/packs', authRequired, async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT * FROM agent_packs ORDER BY name ASC');
+    res.json({ ok: true, packs: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/agents/packs', authRequired, devRequired, async (req, res) => {
+  try {
+    const { name, description, room_id, pack_source_url, role_assignments } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
+    const [result] = await db.execute(
+      'INSERT INTO agent_packs (name, description, room_id, pack_source_url, role_assignments, created_by_user_id) VALUES (?,?,?,?,?,?)',
+      [name.trim(), description || '', Number(room_id) || 202, pack_source_url || '', JSON.stringify(role_assignments || {}), req.user.habbo_user_id]
+    );
+    res.json({ ok: true, id: result.insertId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/agents/packs/:id', authRequired, async (req, res) => {
+  try {
+    const [[row]] = await db.execute('SELECT * FROM agent_packs WHERE id=?', [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, pack: row });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/agents/packs/:id', authRequired, devRequired, async (req, res) => {
+  try {
+    const { name, description, room_id, pack_source_url, role_assignments } = req.body;
+    await db.execute(
+      'UPDATE agent_packs SET name=?, description=?, room_id=?, pack_source_url=?, role_assignments=? WHERE id=?',
+      [name, description || '', Number(room_id) || 202, pack_source_url || '', JSON.stringify(role_assignments || {}), req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/agents/packs/:id', authRequired, devRequired, async (req, res) => {
+  try {
+    await db.execute('DELETE FROM agent_packs WHERE id=?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/agents/packs/:id/trigger', authRequired, async (req, res) => {
+  try {
+    const [[pack]] = await db.execute('SELECT * FROM agent_packs WHERE id=?', [req.params.id]);
+    if (!pack) return res.status(404).json({ error: 'Pack not found' });
+
+    const roleAssignments = typeof pack.role_assignments === 'string'
+      ? JSON.parse(pack.role_assignments)
+      : pack.role_assignments;
+    if (!roleAssignments || Object.keys(roleAssignments).length === 0) {
+      return res.status(400).json({ error: 'Pack has no role assignments. Edit the pack to assign roles.' });
+    }
+
+    const r = await fetch(`${AGENT_TRIGGER_URL}/trigger`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Secret': PORTAL_INTERNAL_SECRET,
+      },
+      body: JSON.stringify({
+        pack_id: Number(req.params.id),
+        pack_source_url: pack.pack_source_url,
+        role_assignments: roleAssignments,
+        room_id: pack.room_id,
+        triggered_by: req.user.habbo_username,
+      })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: data.error || 'Trigger failed' });
+    res.json({ ok: true, ...data });
+  } catch (err) { res.status(502).json({ error: 'Agent trigger unavailable: ' + err.message }); }
 });
 
 app.post('/api/agents/teams/:id/members', authRequired, devRequired, async (req, res) => {
@@ -1331,23 +1443,25 @@ app.delete('/api/agents/teams/:id/templates/:templateId', authRequired, devRequi
 app.post('/api/agents/teams/:id/trigger', authRequired, async (req, res) => {
   try {
     const { flow_id, room_id } = req.body;
-    const [[team]] = await db.execute('SELECT id, name FROM agent_teams WHERE id=?', [req.params.id]);
+    const [[team]] = await db.execute('SELECT id, name, pack_source_url, role_assignments FROM agent_teams WHERE id=?', [req.params.id]);
     if (!team) return res.status(404).json({ error: 'Team not found' });
 
-    // Validate all members have a bot linked
-    const [members] = await db.execute(
-      `SELECT p.name, p.bot_name FROM agent_team_members atm
-       JOIN agent_personas p ON p.id = atm.persona_id
-       WHERE atm.team_id = ?`, [req.params.id]
-    );
-    if (members.length === 0) {
-      return res.status(400).json({ error: 'Team has no members. Add at least one persona.' });
-    }
-    const unlinked = members.filter(m => !m.bot_name?.trim());
-    if (unlinked.length > 0) {
-      return res.status(400).json({
-        error: `Cannot launch: ${unlinked.map(m => `"${m.name}"`).join(', ')} ${unlinked.length === 1 ? 'has' : 'have'} no bot linked. Edit the persona(s) to assign a hotel bot.`
-      });
+    // Validate all members have a bot linked (skip in pack mode — role_assignments handles bot mapping)
+    if (!team.pack_source_url) {
+      const [members] = await db.execute(
+        `SELECT p.name, p.bot_name FROM agent_team_members atm
+         JOIN agent_personas p ON p.id = atm.persona_id
+         WHERE atm.team_id = ?`, [req.params.id]
+      );
+      if (members.length === 0) {
+        return res.status(400).json({ error: 'Team has no members. Add at least one persona.' });
+      }
+      const unlinked = members.filter(m => !m.bot_name?.trim());
+      if (unlinked.length > 0) {
+        return res.status(400).json({
+          error: `Cannot launch: ${unlinked.map(m => `"${m.name}"`).join(', ')} ${unlinked.length === 1 ? 'has' : 'have'} no bot linked. Edit the persona(s) to assign a hotel bot.`
+        });
+      }
     }
 
     const r = await fetch(`${AGENT_TRIGGER_URL}/trigger`, {
