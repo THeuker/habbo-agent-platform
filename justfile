@@ -2,6 +2,10 @@ set windows-powershell := true
 compose_local := "docker compose --env-file .env.registry -f docker-compose.registry.yaml"
 compose_registry := "docker compose --env-file .env.registry -f docker-compose.registry.yaml"
 
+# Ensure proxy_net exists (safe to run multiple times)
+_ensure-proxy-net:
+  docker network create proxy_net 2>/dev/null || true
+
 # Show all available recipes
 default:
   @just --list
@@ -27,11 +31,11 @@ quick-start:
   just up && just doctor
 
 # Start registry stack in background
-up:
+up: _ensure-proxy-net
   {{compose_local}} up -d
 
 # Start image-only stack (production style)
-up-registry:
+up-registry: _ensure-proxy-net
   {{compose_registry}} up -d
 
 # Stop and remove registry stack
@@ -41,13 +45,6 @@ down:
 # Stop and remove image-only stack
 down-registry:
   {{compose_registry}} down
-
-# Attach running nitro/arcturus/portal to proxy_net (run anytime stack is already up)
-link-proxy:
-  docker network connect proxy_net nitro 2>/dev/null || true
-  docker network connect proxy_net arcturus 2>/dev/null || true
-  docker network connect proxy_net agent-portal 2>/dev/null || true
-  @echo "Done. nitro, arcturus, agent-portal are on proxy_net."
 
 # Restart running services
 restart:
