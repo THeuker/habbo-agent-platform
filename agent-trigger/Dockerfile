@@ -12,6 +12,9 @@ COPY package.json ./
 COPY src/ ./src/
 COPY entrypoint.sh ./entrypoint.sh
 
+# Bake Claude hook settings into the image so hooks fire without any volume mount
+COPY .claude/ /root/.claude/
+
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 3004
