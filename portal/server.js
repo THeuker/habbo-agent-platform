@@ -1000,7 +1000,7 @@ app.get('/api/figure', async (req, res) => {
     if (!upstream.ok) return res.status(502).end();
     const buf = Buffer.from(await upstream.arrayBuffer());
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.send(buf);
   } catch {
     res.status(502).end();
