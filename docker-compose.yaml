@@ -65,7 +65,7 @@ services:
     image: axllent/mailpit:latest
     ports:
       - 127.0.0.1:${HABBO_MAILPIT_SMTP_PORT:-1025}:1025
-      - 127.0.0.1:${HABBO_MAILPIT_UI_PORT:-8025}:8025
+      - 127.0.0.1:${HABBO_MAILPIT_UI_PORT:-8027}:8025
     networks:
       nitro:
 
@@ -190,6 +190,8 @@ services:
       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
       - TWILIO_FROM_NUMBER=${TWILIO_FROM_NUMBER:-}
       - HABBO_HOOK_ENABLED=false
+      - PORTAL_URL=${HABBO_PORTAL_INTERNAL_URL:-http://agent-portal:3000}
+      - PORTAL_INTERNAL_SECRET=${HABBO_PORTAL_INTERNAL_SECRET:-change-this-secret}
     volumes:
       - .:/project:ro
     ports:
