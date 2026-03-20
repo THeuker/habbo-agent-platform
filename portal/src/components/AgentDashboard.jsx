@@ -4,6 +4,7 @@ import { HabboFigure } from './HabboFigure'
 import {
   Bot, Package, Play, Edit2, Trash2, Plus, X, Check,
   Loader2, AlertCircle, Users, Zap, ChevronDown, ChevronUp, Square,
+  Shield, Wifi, WifiOff, Key, ServerCog,
 } from 'lucide-react'
 
 // ── Markdown Editor ───────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ export function AgentDashboard({ me }) {
   const [stopping, setStopping] = useState(false)
 
   const [liveBots, setLiveBots] = useState([])
+  const [mcpStatus, setMcpStatus] = useState(null)
 
   // Poll agent-trigger health every 5s to show active team status
   useEffect(() => {
@@ -93,6 +95,7 @@ export function AgentDashboard({ me }) {
         const d = await res.json().catch(() => ({}))
         setActiveTeam(d.trigger?.activeTeam ?? null)
         setLiveBots((d.bots || []).filter(b => b.room_id > 0))
+        if (d.mcp) setMcpStatus(d.mcp)
       } catch { setActiveTeam(null) }
     }
     poll()
@@ -109,6 +112,7 @@ export function AgentDashboard({ me }) {
   const tabs = [
     { id: 'packs', label: 'Packs', icon: Package },
     { id: 'integrated', label: 'Integrated', icon: Users },
+    ...(me?.is_developer ? [{ id: 'developer', label: 'Developer', icon: Shield }] : []),
   ]
 
   return (
@@ -225,6 +229,96 @@ export function AgentDashboard({ me }) {
         })()}
         {tab === 'packs' && <PacksView />}
         {tab === 'integrated' && <IntegratedView />}
+        {tab === 'developer' && me?.is_developer && <DeveloperView mcpStatus={mcpStatus} />}
+      </div>
+    </div>
+  )
+}
+
+// ── Developer View ────────────────────────────────────────────────────────
+
+function DeveloperView({ mcpStatus }) {
+  const servers = mcpStatus?.servers ?? []
+  const loading = mcpStatus === null
+
+  return (
+    <div className="space-y-6">
+      {/* MCP Servers */}
+      <div className="rounded-xl border border-border bg-card/50 overflow-hidden">
+        <div className="px-5 py-4 border-b border-border flex items-center gap-2">
+          <ServerCog className="w-4 h-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Connected MCP Servers</h2>
+          <span className="ml-auto text-xs text-muted-foreground">
+            {loading ? 'Loading…' : `${servers.filter(s => s.reachable).length} / ${servers.length} reachable`}
+          </span>
+        </div>
+
+        {loading && (
+          <div className="px-5 py-8 flex items-center justify-center gap-2 text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-sm">Checking MCP servers…</span>
+          </div>
+        )}
+
+        {!loading && mcpStatus?.error && (
+          <div className="px-5 py-4 flex items-center gap-2 text-amber-400">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span className="text-sm">{mcpStatus.error}</span>
+          </div>
+        )}
+
+        {!loading && !mcpStatus?.error && servers.length === 0 && (
+          <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+            No MCP servers configured in <code className="text-xs bg-muted px-1 py-0.5 rounded">.mcp.json</code>
+          </div>
+        )}
+
+        {!loading && servers.length > 0 && (
+          <div className="divide-y divide-border">
+            {servers.map(server => (
+              <div key={server.name} className="px-5 py-4 flex items-center gap-4">
+                {/* Status dot */}
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${server.reachable ? 'bg-green-400' : 'bg-red-400'}`} />
+
+                {/* Name + URL */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">{server.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{server.url}</p>
+                </div>
+
+                {/* Auth badge */}
+                <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${
+                  server.hasKey
+                    ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+                    : 'text-muted-foreground border-border bg-muted/30'
+                }`}>
+                  <Key className="w-3 h-3" />
+                  {server.hasKey ? server.keyPreview : 'No key'}
+                </div>
+
+                {/* Reachable badge */}
+                <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border font-medium ${
+                  server.reachable
+                    ? 'text-green-400 border-green-500/30 bg-green-500/10'
+                    : 'text-red-400 border-red-500/30 bg-red-500/10'
+                }`}>
+                  {server.reachable
+                    ? <><Wifi className="w-3 h-3" /> {server.statusCode ?? 'OK'}</>
+                    : <><WifiOff className="w-3 h-3" /> Unreachable</>
+                  }
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!loading && mcpStatus?.mcpJsonPath && (
+          <div className="px-5 py-2 border-t border-border bg-muted/20">
+            <p className="text-xs text-muted-foreground">
+              Config: <code className="text-xs">{mcpStatus.mcpJsonPath}</code>
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )
