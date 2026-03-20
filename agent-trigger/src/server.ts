@@ -15,6 +15,55 @@ const ALLOWED_NUMBERS = (process.env.HABBO_ALLOWED_PHONE_NUMBERS ?? "")
   .filter(Boolean);
 const STOP_FILE = "/tmp/hotel-team-stop";
 const LOG_FILE = "/tmp/hotel-team.log";
+const NARRATOR_BOTS_MAP = "/tmp/hotel-narrator-bots.json";
+
+// ── MCP helper (used by narrator) ────────────────────────────────────────────
+
+const MCP_ENDPOINT = (() => {
+  const raw = (process.env.HABBO_MCP_URL ?? "http://habbo-mcp:3003/mcp").trim();
+  return raw.endsWith("/mcp") ? raw : raw.replace(/\/+$/, "") + "/mcp";
+})();
+const MCP_API_KEY = process.env.MCP_API_KEY ?? "";
+
+async function mcpCall<T>(toolName: string, args: Record<string, unknown>): Promise<T> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (MCP_API_KEY) headers["authorization"] = `Bearer ${MCP_API_KEY}`;
+  const res = await fetch(MCP_ENDPOINT, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `narrator-${Date.now()}`,
+      method: "tools/call",
+      params: { name: toolName, arguments: args },
+    }),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) throw new Error(`MCP HTTP ${res.status}`);
+  const data = await res.json() as any;
+  if (data.error) throw new Error(`MCP error: ${data.error.message}`);
+  const text = data.result?.content?.[0]?.text;
+  try { return JSON.parse(text) as T; } catch { return data.result as T; }
+}
+
+// Bot name → id cache (avoids calling list_bots every tool use)
+const botIdCache = new Map<string, number>();
+
+async function findBotIdByName(name: string): Promise<number | null> {
+  if (botIdCache.has(name)) return botIdCache.get(name)!;
+  try {
+    const bots = await mcpCall<Array<{ id: number; name: string }>>("list_bots", {});
+    if (Array.isArray(bots)) {
+      for (const b of bots) {
+        if (b.name) botIdCache.set(b.name.toLowerCase(), b.id);
+      }
+    }
+    const id = botIdCache.get(name.toLowerCase());
+    return id ?? null;
+  } catch {
+    return null;
+  }
+}
 const PORTAL_URL = (process.env.PORTAL_URL || process.env.portal_url || "http://agent-portal:3000").replace(/\/$/, "");
 const PORTAL_INTERNAL_SECRET = process.env.PORTAL_INTERNAL_SECRET ?? "";
 
@@ -335,6 +384,29 @@ const server = Bun.serve({
       return Response.json({ ok: true, message: "State reset." });
     }
 
+    // ── Hotel narrator endpoint (called by hotel_narrator.mjs hook) ─────────
+    if (url.pathname === "/narrator" && req.method === "POST") {
+      let body: { bot_name?: string; message?: string; event?: string; session_id?: string; tool_name?: string };
+      try { body = await req.json(); } catch { return Response.json({ ok: false }, { status: 400 }); }
+
+      const { bot_name, message } = body;
+      if (!bot_name || !message) return Response.json({ ok: false, error: "bot_name and message required" }, { status: 400 });
+
+      // Fire-and-forget: resolve bot_id then talk
+      (async () => {
+        try {
+          const botId = await findBotIdByName(bot_name);
+          if (botId == null) { log(`[narrator] Bot "${bot_name}" not found in hotel`); return; }
+          await mcpCall("talk_bot", { bot_id: botId, message: message.slice(0, 240), type: "talk" });
+          log(`[narrator] ${bot_name}: ${message.slice(0, 80)}`);
+        } catch (err: any) {
+          log(`[narrator] error for ${bot_name}: ${err.message}`);
+        }
+      })();
+
+      return Response.json({ ok: true });
+    }
+
     // ── Portal trigger endpoint ──────────────────────────────────────────────
     if (url.pathname === "/trigger" && req.method === "POST") {
       const secret = req.headers.get("X-Internal-Secret") ?? "";
@@ -374,6 +446,19 @@ const server = Bun.serve({
       const prompt = buildPromptFromConfig(config, roomId, triggeredBy);
       activeTeam = { roomId, startTime: new Date(), from: triggeredBy };
       log(`[trigger] Team "${config.team.name}" started in room ${roomId} by ${triggeredBy}`);
+
+      // Write known bot names so hotel_narrator.mjs can map subagent prompts → personas
+      try {
+        const knownBots = config.members.map(m => m.bot_name).filter(Boolean);
+        const existing = existsSync(NARRATOR_BOTS_MAP)
+          ? JSON.parse(readFileSync(NARRATOR_BOTS_MAP, "utf-8"))
+          : {};
+        writeFileSync(NARRATOR_BOTS_MAP, JSON.stringify({
+          ...existing,
+          known_bots: knownBots,
+          sessions: existing.sessions ?? {},
+        }, null, 2));
+      } catch { /* non-fatal */ }
 
       // Run in background
       runOrchestratorWithPrompt(prompt, roomId, triggeredBy)
