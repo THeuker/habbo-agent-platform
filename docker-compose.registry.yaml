@@ -202,6 +202,7 @@ services:
       - HABBO_HOOK_ENABLED=false
     volumes:
       - .:/project:ro
+      - ./agent-trigger/.claude:/root/.claude:ro
     ports:
       - "127.0.0.1:${HABBO_AGENT_TRIGGER_PORT:-3004}:3004"
     depends_on:
