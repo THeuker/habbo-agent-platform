@@ -1516,8 +1516,12 @@ ensurePortalSchema()
   .then(ensureAgentSeedData)
   .then(async () => {
     if (mailTransport) {
-      await mailTransport.verify();
-      console.log(`portal SMTP ready on ${PORTAL_SMTP_HOST}:${PORTAL_SMTP_PORT}`);
+      try {
+        await mailTransport.verify();
+        console.log(`portal SMTP ready on ${PORTAL_SMTP_HOST}:${PORTAL_SMTP_PORT}`);
+      } catch (err) {
+        console.warn(`portal SMTP verify failed (${err.message}); email features may not work but portal will start`);
+      }
     } else {
       console.warn('portal SMTP is disabled (PORTAL_SMTP_HOST not set); password reset emails will not be sent');
     }
