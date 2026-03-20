@@ -353,6 +353,21 @@ async function ensurePortalSchema() {
         ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS agent_room_templates (
+      id INT NOT NULL AUTO_INCREMENT,
+      team_id INT NOT NULL,
+      bot_name VARCHAR(25) NOT NULL,
+      room_id INT NOT NULL,
+      x TINYINT NOT NULL DEFAULT 0,
+      y TINYINT NOT NULL DEFAULT 0,
+      rot TINYINT NOT NULL DEFAULT 2,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_team_bot_room (team_id, bot_name, room_id),
+      CONSTRAINT fk_art_team FOREIGN KEY (team_id) REFERENCES agent_teams(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 }
 
 function sha256(input) {
@@ -438,7 +453,12 @@ async function ensureBootstrapPortalUser() {
     [habboUser.id, PORTAL_BOOTSTRAP_EMAIL, PORTAL_BOOTSTRAP_USERNAME]
   );
   if (existingRows.length > 0) {
-    console.log('portal bootstrap user already exists; skipping');
+    // Ensure bootstrap user always has developer access (idempotent fix)
+    await db.execute(
+      'UPDATE portal_users SET is_developer = 1 WHERE email = ? LIMIT 1',
+      [PORTAL_BOOTSTRAP_EMAIL]
+    );
+    console.log('portal bootstrap user already exists; ensured is_developer=1');
     return;
   }
 
@@ -447,7 +467,126 @@ async function ensureBootstrapPortalUser() {
     'INSERT INTO portal_users (email, username, password_hash, habbo_user_id, habbo_username) VALUES (?, ?, ?, ?, ?)',
     [PORTAL_BOOTSTRAP_EMAIL, PORTAL_BOOTSTRAP_USERNAME, passwordHash, habboUser.id, habboUser.username]
   );
+  await db.execute(
+    'UPDATE portal_users SET is_developer = 1 WHERE email = ? LIMIT 1',
+    [PORTAL_BOOTSTRAP_EMAIL]
+  );
   console.log(`portal bootstrap user created for Habbo '${habboUser.username}'`);
+}
+
+async function ensureAgentSeedData() {
+  // Only seed if no teams exist yet
+  const [[{ cnt }]] = await db.execute('SELECT COUNT(*) AS cnt FROM agent_teams');
+  if (cnt > 0) return;
+
+  console.log('Seeding agent personas and Sprint Team...');
+
+  const TOM_PROMPT = `You are Tom, a senior backend developer at The Pixel Office. You're hanging out in Habbo Hotel between sprints.
+
+Personality: pragmatic, direct, occasionally cryptic. Short sentences. Gets excited about clean code and good data models. Drops into Dutch occasionally.
+
+Setup:
+1. Find your bot: call list_bots and find the bot named "Tom". If not found, use deploy_bot to create it in the target room with figure_type "agent-m".
+2. Note the room_id and bot_id for all further calls.
+
+Behavior loop (repeat until /tmp/hotel-team-stop exists):
+1. Call get_room_chat_log (room_id from above, limit 20)
+2. Find messages newer than your last-seen timestamp
+3. React to: Sander's messages, players mentioning "code"/"backend"/"sprint"/"API"/your name
+4. Every 5 iterations: share something you're working on (keep it brief, 1-2 sentences)
+5. Check if /tmp/hotel-team-stop exists — if yes, say a short goodbye via talk_bot and EXIT
+
+Rules:
+- Keep all messages SHORT (1-3 sentences max)
+- Do NOT call delete_bot when stopping — bots stay deployed
+- Track last-seen timestamp to avoid reacting to old messages`;
+
+  const SANDER_PROMPT = `You are Sander, a frontend developer at The Pixel Office. You love design systems and clean UX.
+
+Personality: enthusiastic, asks lots of questions, collaborative. Builds on what Tom says. Mentions React, CSS, design. Occasional Dutch phrases.
+
+Setup:
+1. Find your bot: call list_bots and find the bot named "Sander". If not found, use deploy_bot to create it in the target room with figure_type "citizen-m".
+2. Note the room_id and bot_id for all further calls.
+
+Behavior loop (repeat until /tmp/hotel-team-stop exists):
+1. Call get_room_chat_log (room_id from above, limit 20)
+2. Find messages newer than your last-seen timestamp
+3. React to: Tom's messages, players mentioning "design"/"frontend"/"UI"/"CSS"/your name
+4. Every 5 iterations: ask Tom a question about his work, or share a frontend insight
+5. Check if /tmp/hotel-team-stop exists — if yes, say a short goodbye via talk_bot and EXIT
+
+Rules:
+- Keep all messages SHORT (1-3 sentences max)
+- Do NOT call delete_bot when stopping — bots stay deployed
+- Track last-seen timestamp to avoid reacting to old messages`;
+
+  const SPRINT_ORCHESTRATOR = `You are the orchestrator for the Sprint Team at The Pixel Office Hotel.
+Target room: {{ROOM_ID}}
+Triggered by: {{TRIGGERED_BY}}
+
+Launch ALL agents CONCURRENTLY in a single Agent tool call. Do not launch them one by one.
+
+{{PERSONAS}}
+
+Launch now — all agents in ONE message.`;
+
+  // Insert personas
+  const [tomResult] = await db.execute(
+    'INSERT IGNORE INTO agent_personas (name, description, prompt, figure_type, bot_name) VALUES (?,?,?,?,?)',
+    ['Tom', 'Backend developer — pragmatic, direct', TOM_PROMPT, 'agent-m', 'Tom']
+  );
+  const [sanderResult] = await db.execute(
+    'INSERT IGNORE INTO agent_personas (name, description, prompt, figure_type, bot_name) VALUES (?,?,?,?,?)',
+    ['Sander', 'Frontend developer — enthusiastic, design-focused', SANDER_PROMPT, 'citizen-m', 'Sander']
+  );
+
+  // Get actual IDs (in case INSERT IGNORE skipped due to existing)
+  const [[tomRow]] = await db.execute('SELECT id FROM agent_personas WHERE name=?', ['Tom']);
+  const [[sanderRow]] = await db.execute('SELECT id FROM agent_personas WHERE name=?', ['Sander']);
+
+  // Insert Sprint Team
+  const [teamResult] = await db.execute(
+    'INSERT IGNORE INTO agent_teams (name, description, orchestrator_prompt) VALUES (?,?,?)',
+    ['Sprint Team', 'Tom & Sander discuss sprint work in the hotel', SPRINT_ORCHESTRATOR]
+  );
+
+  const [[teamRow]] = await db.execute('SELECT id FROM agent_teams WHERE name=?', ['Sprint Team']);
+  if (!teamRow) return;
+
+  // Link members
+  if (tomRow) {
+    await db.execute(
+      'INSERT IGNORE INTO agent_team_members (team_id, persona_id, role) VALUES (?,?,?)',
+      [teamRow.id, tomRow.id, 'backend']
+    );
+  }
+  if (sanderRow) {
+    await db.execute(
+      'INSERT IGNORE INTO agent_team_members (team_id, persona_id, role) VALUES (?,?,?)',
+      [teamRow.id, sanderRow.id, 'frontend']
+    );
+  }
+
+  // Insert Daily Sprint Review flow
+  await db.execute(
+    'INSERT IGNORE INTO agent_flows (name, description, tasks_json) VALUES (?,?,?)',
+    ['Daily Sprint Review', 'Tom and Sander discuss current sprint progress', JSON.stringify([
+      { id: 1, title: 'Standup', description: 'Share what you worked on yesterday and today' },
+      { id: 2, title: 'Blockers', description: 'Mention any blockers or open questions' },
+      { id: 3, title: 'Player interaction', description: 'Engage with hotel visitors who join the conversation' }
+    ])]
+  );
+
+  const [[flowRow]] = await db.execute('SELECT id FROM agent_flows WHERE name=?', ['Daily Sprint Review']);
+  if (flowRow) {
+    await db.execute(
+      'INSERT IGNORE INTO agent_team_flows (team_id, flow_id) VALUES (?,?)',
+      [teamRow.id, flowRow.id]
+    );
+  }
+
+  console.log('Sprint Team seeded with Tom & Sander personas.');
 }
 
 async function createHabboUser(username) {
@@ -1152,21 +1291,77 @@ app.delete('/api/agents/teams/:id/flows/:flowId', authRequired, devRequired, asy
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Room Templates ────────────────────────────────────────────────────────────
+
+app.get('/api/agents/teams/:id/templates', authRequired, async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT * FROM agent_room_templates WHERE team_id=? ORDER BY bot_name ASC',
+      [req.params.id]
+    );
+    res.json({ ok: true, templates: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/agents/teams/:id/templates', authRequired, devRequired, async (req, res) => {
+  try {
+    const { bot_name, room_id, x, y, rot } = req.body;
+    if (!bot_name?.trim()) return res.status(400).json({ error: 'bot_name required' });
+    await db.execute(
+      `INSERT INTO agent_room_templates (team_id, bot_name, room_id, x, y, rot)
+       VALUES (?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE room_id=VALUES(room_id), x=VALUES(x), y=VALUES(y), rot=VALUES(rot)`,
+      [req.params.id, bot_name.trim(), Number(room_id) || 0, Number(x) || 0, Number(y) || 0, Number(rot) || 2]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/agents/teams/:id/templates/:templateId', authRequired, devRequired, async (req, res) => {
+  try {
+    await db.execute(
+      'DELETE FROM agent_room_templates WHERE id=? AND team_id=?',
+      [req.params.templateId, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Trigger a team
 app.post('/api/agents/teams/:id/trigger', authRequired, async (req, res) => {
   try {
     const { flow_id, room_id } = req.body;
     const [[team]] = await db.execute('SELECT id, name FROM agent_teams WHERE id=?', [req.params.id]);
     if (!team) return res.status(404).json({ error: 'Team not found' });
+
+    // Validate all members have a bot linked
+    const [members] = await db.execute(
+      `SELECT p.name, p.bot_name FROM agent_team_members atm
+       JOIN agent_personas p ON p.id = atm.persona_id
+       WHERE atm.team_id = ?`, [req.params.id]
+    );
+    if (members.length === 0) {
+      return res.status(400).json({ error: 'Team has no members. Add at least one persona.' });
+    }
+    const unlinked = members.filter(m => !m.bot_name?.trim());
+    if (unlinked.length > 0) {
+      return res.status(400).json({
+        error: `Cannot launch: ${unlinked.map(m => `"${m.name}"`).join(', ')} ${unlinked.length === 1 ? 'has' : 'have'} no bot linked. Edit the persona(s) to assign a hotel bot.`
+      });
+    }
+
     const r = await fetch(`${AGENT_TRIGGER_URL}/trigger`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Secret': PORTAL_INTERNAL_SECRET,
+      },
       body: JSON.stringify({
         team_id: Number(req.params.id),
         flow_id: flow_id ? Number(flow_id) : null,
         room_id: Number(room_id) || 202,
         triggered_by: req.user.username,
-        portal_url: process.env.PORTAL_PUBLIC_URL
+        portal_url: process.env.PORTAL_PUBLIC_URL || `http://agent-portal:3000`,
       })
     });
     const data = await r.json().catch(() => ({}));
@@ -1231,6 +1426,16 @@ app.delete('/api/agents/flows/:id', authRequired, devRequired, async (req, res) 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// List all deployed bots (for persona bot picker)
+app.get('/api/agents/bots', authRequired, async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT id, name, room_id, x, y, figure FROM bots ORDER BY name ASC'
+    );
+    res.json({ ok: true, bots: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Agent Status ─────────────────────────────────────────────────────────────
 
 app.get('/api/agents/status', authRequired, async (req, res) => {
@@ -1269,7 +1474,11 @@ app.get('/api/internal/teams/:id/config', async (req, res) => {
     const flow = flowId
       ? (await db.execute('SELECT * FROM agent_flows WHERE id=?', [flowId]))[0][0]
       : null;
-    res.json({ ok: true, team, members, flow });
+    const [templates] = await db.execute(
+      'SELECT bot_name, room_id, x, y, rot FROM agent_room_templates WHERE team_id=?',
+      [teamId]
+    );
+    res.json({ ok: true, team, members, flow, templates });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1304,6 +1513,7 @@ app.get('*', (_req, res) => {
 
 ensurePortalSchema()
   .then(ensureBootstrapPortalUser)
+  .then(ensureAgentSeedData)
   .then(async () => {
     if (mailTransport) {
       await mailTransport.verify();

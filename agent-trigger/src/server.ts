@@ -15,6 +15,8 @@ const ALLOWED_NUMBERS = (process.env.HABBO_ALLOWED_PHONE_NUMBERS ?? "")
   .filter(Boolean);
 const STOP_FILE = "/tmp/hotel-team-stop";
 const LOG_FILE = "/tmp/hotel-team.log";
+const PORTAL_URL = (process.env.PORTAL_URL || process.env.portal_url || "http://agent-portal:3000").replace(/\/$/, "");
+const PORTAL_INTERNAL_SECRET = process.env.PORTAL_INTERNAL_SECRET ?? "";
 
 function log(line: string) {
   const entry = `[${new Date().toISOString()}] ${line}\n`;
@@ -83,6 +85,133 @@ function buildPrompt(roomId: number, from: string): string {
     .replaceAll("{{TRIGGERED_BY}}", from)
     .replaceAll("{{TOM_PERSONA}}", read("personas/tom.md"))
     .replaceAll("{{SANDER_PERSONA}}", read("personas/sander.md"));
+}
+
+// ── Dynamic config-driven orchestration ────────────────────────────────────
+
+interface TeamMember {
+  name: string;
+  prompt: string;
+  figure_type: string;
+  bot_name: string;
+  role: string;
+}
+
+interface RoomTemplate {
+  bot_name: string;
+  room_id: number;
+  x: number;
+  y: number;
+  rot: number;
+}
+
+interface TeamConfig {
+  team: { id: number; name: string; description: string; orchestrator_prompt: string };
+  members: TeamMember[];
+  flow: { name: string; description: string; tasks_json: string } | null;
+  templates: RoomTemplate[];
+}
+
+async function fetchTeamConfig(teamId: number, flowId: number | null): Promise<TeamConfig> {
+  const params = flowId ? `?flow_id=${flowId}` : "";
+  const url = `${PORTAL_URL}/api/internal/teams/${teamId}/config${params}`;
+  const res = await fetch(url, {
+    headers: {
+      "X-Internal-Secret": PORTAL_INTERNAL_SECRET,
+    },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch team config (${res.status}): ${text}`);
+  }
+  const data = await res.json() as { ok: boolean; team: TeamConfig["team"]; members: TeamMember[]; flow: TeamConfig["flow"]; templates: RoomTemplate[] };
+  return { team: data.team, members: data.members, flow: data.flow, templates: data.templates ?? [] };
+}
+
+function buildPromptFromConfig(config: TeamConfig, roomId: number, triggeredBy: string): string {
+  const templateNote = (botName: string): string => {
+    const tpl = config.templates.find(t => t.bot_name === botName && t.room_id === roomId);
+    if (tpl) return `\n**Room placement**: deploy at x=${tpl.x}, y=${tpl.y}, rot=${tpl.rot} in room ${roomId}`;
+    return `\n**Room placement**: deploy anywhere in room ${roomId}`;
+  };
+
+  const memberSections = config.members.map(m => `
+## Agent: ${m.name}${m.role ? ` (${m.role})` : ""} — bot: "${m.bot_name}"
+${m.prompt}
+${templateNote(m.bot_name)}`).join("\n\n");
+
+  const flowSection = config.flow
+    ? `\n## Flow: ${config.flow.name}\n${config.flow.description}\n`
+    : "";
+
+  const orchestratorBase = config.team.orchestrator_prompt
+    || `You are the orchestrator for team "${config.team.name}".\nTarget room: {{ROOM_ID}}\nTriggered by: {{TRIGGERED_BY}}\n\nLaunch all agents CONCURRENTLY in a single Agent tool call.\n\n{{PERSONAS}}\n\nLaunch all agents in ONE message.`;
+
+  return orchestratorBase
+    .replaceAll("{{ROOM_ID}}", String(roomId))
+    .replaceAll("{{TRIGGERED_BY}}", triggeredBy)
+    .replaceAll("{{PERSONAS}}", memberSections + flowSection);
+}
+
+function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (existsSync(STOP_FILE)) unlinkSync(STOP_FILE);
+
+    const claudeBin = process.env.CLAUDE_BIN ?? "claude";
+    const child = spawn(claudeBin, ["-p", "--dangerously-skip-permissions", "--no-session-persistence", "--output-format", "stream-json", "--verbose"], {
+      cwd: PROJECT_DIR,
+      env: {
+        ...process.env,
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
+        MCP_API_KEY: process.env.MCP_API_KEY ?? "",
+        HABBO_HOOK_ENABLED: "true",
+        HABBO_HOOK_TRANSPORT: process.env.HABBO_HOOK_TRANSPORT ?? "remote",
+        HABBO_HOOK_REMOTE_BASE_URL:
+          process.env.HABBO_HOOK_REMOTE_BASE_URL ?? "https://hotel-mcp.fixdev.nl",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d: Buffer) => {
+      const text = d.toString();
+      stdout += text;
+      for (const line of text.split("\n").filter(Boolean)) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "assistant" && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === "text" && block.text?.trim()) log(`[think] ${block.text.trim().slice(0, 200)}`);
+              if (block.type === "tool_use") log(`[tool→] ${block.name} ${JSON.stringify(block.input).slice(0, 150)}`);
+            }
+          } else if (event.type === "tool_result") {
+            const content = Array.isArray(event.content) ? event.content.map((c: any) => c.text).join("") : String(event.content ?? "");
+            log(`[tool←] ${content.slice(0, 150)}`);
+          } else if (event.type === "result") {
+            log(`[done] ${event.result?.slice(0, 200) ?? "complete"}`);
+          }
+        } catch { log(`[claude] ${line.slice(0, 200)}`); }
+      }
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      const text = d.toString();
+      stderr += text;
+      log(`[claude:err] ${text.trim()}`);
+    });
+
+    child.on("close", (code: number | null) => {
+      if (code === 0) {
+        resolve(stdout.trim().slice(-200) || "Team session complete.");
+      } else {
+        reject(new Error(`claude exited ${code}: ${stderr.slice(0, 300)}`));
+      }
+    });
+  });
 }
 
 function runOrchestrator(roomId: number, from: string): Promise<string> {
@@ -204,6 +333,60 @@ const server = Bun.serve({
       activeTeam = null;
       if (existsSync(STOP_FILE)) unlinkSync(STOP_FILE);
       return Response.json({ ok: true, message: "State reset." });
+    }
+
+    // ── Portal trigger endpoint ──────────────────────────────────────────────
+    if (url.pathname === "/trigger" && req.method === "POST") {
+      const secret = req.headers.get("X-Internal-Secret") ?? "";
+      if (PORTAL_INTERNAL_SECRET && secret !== PORTAL_INTERNAL_SECRET) {
+        return new Response("Forbidden", { status: 403 });
+      }
+
+      let body: { team_id?: number; flow_id?: number | null; room_id?: number; triggered_by?: string; portal_url?: string };
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+      }
+
+      const teamId = Number(body.team_id);
+      const flowId = body.flow_id ? Number(body.flow_id) : null;
+      const roomId = Number(body.room_id) || 202;
+      const triggeredBy = body.triggered_by ?? "portal";
+
+      if (!teamId) {
+        return Response.json({ ok: false, error: "team_id required" }, { status: 400 });
+      }
+
+      if (activeTeam) {
+        return Response.json({ ok: false, error: `Team already active in room ${activeTeam.roomId}. Stop it first.` }, { status: 409 });
+      }
+
+      // Fetch team config from portal
+      let config: TeamConfig;
+      try {
+        config = await fetchTeamConfig(teamId, flowId);
+      } catch (err: any) {
+        log(`[trigger] Failed to fetch team config: ${err.message}`);
+        return Response.json({ ok: false, error: `Could not load team config: ${err.message}` }, { status: 502 });
+      }
+
+      const prompt = buildPromptFromConfig(config, roomId, triggeredBy);
+      activeTeam = { roomId, startTime: new Date(), from: triggeredBy };
+      log(`[trigger] Team "${config.team.name}" started in room ${roomId} by ${triggeredBy}`);
+
+      // Run in background
+      runOrchestratorWithPrompt(prompt, roomId, triggeredBy)
+        .then((summary) => {
+          activeTeam = null;
+          log(`[trigger] Team "${config.team.name}" completed: ${summary.slice(0, 100)}`);
+        })
+        .catch((err: Error) => {
+          activeTeam = null;
+          log(`[trigger] Team "${config.team.name}" error: ${err.message}`);
+        });
+
+      return Response.json({ ok: true, message: `Team "${config.team.name}" launched in room ${roomId}` });
     }
 
     // ── Voice webhook (initial call) ─────────────────────────────────────────

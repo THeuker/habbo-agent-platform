@@ -3,7 +3,7 @@ import { HabboFigure } from './HabboFigure'
 import {
   Users, Bot, Zap, Play, Square, Plus, Edit, Trash2,
   ChevronRight, RefreshCw, ArrowUp, ArrowDown,
-  Check, X, Loader2, AlertCircle, Radio
+  Check, X, Loader2, AlertCircle, AlertTriangle, Radio, MapPin
 } from 'lucide-react'
 
 // ── API helper ────────────────────────────────────────────────────────────
@@ -308,6 +308,19 @@ function TeamsView({ isDev }) {
                 </div>
               )}
             </div>
+
+            {/* Bot assignment validation */}
+            {(selected.members || []).some(m => !m.bot_name?.trim()) && (
+              <div className="flex items-start gap-2.5 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5 text-yellow-400 text-xs">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <span>
+                  Some agents have no bot linked. The team cannot be launched until all agents have a bot assigned. Go to <strong>Personas</strong> tab to fix this.
+                </span>
+              </div>
+            )}
+
+            {/* Room Templates */}
+            <RoomTemplatesSection teamId={selected.id} isDev={isDev} members={selected.members || []} />
           </div>
         ) : (
           <EmptyState
@@ -324,12 +337,17 @@ function TeamsView({ isDev }) {
 // ── Member Card ───────────────────────────────────────────────────────────
 
 function MemberCard({ member, isDev, onRemove }) {
+  const missingBot = !member.bot_name?.trim()
   return (
-    <div className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card">
+    <div className={`flex items-center gap-3 p-3 rounded-xl border bg-card ${missingBot ? 'border-yellow-500/40' : 'border-border'}`}>
       <HabboFigure figure={null} size="sm" animate={true} />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground truncate">{member.name}</p>
-        {member.bot_name && (
+        {missingBot ? (
+          <p className="text-xs text-yellow-500 flex items-center gap-1 mt-0.5">
+            <AlertTriangle className="w-3 h-3" /> No bot linked
+          </p>
+        ) : (
           <p className="text-xs text-muted-foreground">Bot: {member.bot_name}</p>
         )}
         {member.role && (
@@ -579,15 +597,7 @@ function PersonaEditor({ persona, figureTypes, onSave, onCancel }) {
               onChange={e => setForm(f => ({...f, name: e.target.value}))}
             />
           </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Hotel Bot Name</label>
-            <input
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              placeholder="Name of bot in hotel"
-              value={form.bot_name}
-              onChange={e => setForm(f => ({...f, bot_name: e.target.value}))}
-            />
-          </div>
+          <BotNamePicker value={form.bot_name} onChange={v => setForm(f => ({...f, bot_name: v}))} />
         </div>
 
         <div className="space-y-1.5">
@@ -650,6 +660,75 @@ function PersonaEditor({ persona, figureTypes, onSave, onCancel }) {
           </button>
         </div>
       </form>
+    </div>
+  )
+}
+
+function BotNamePicker({ value, onChange }) {
+  const [bots, setBots] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api('/api/agents/bots')
+      .then(d => setBots(d.bots || []))
+      .catch(() => setBots([]))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-medium">Hotel Bot Name</label>
+      <div className="flex h-9 items-center px-3 rounded-md border border-input text-xs text-muted-foreground">Loading bots…</div>
+    </div>
+  )
+
+  // Always allow free text fallback even if bots list is available
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-medium">Hotel Bot</label>
+      {bots.length > 0 ? (
+        <div className="space-y-1">
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            value={bots.some(b => b.name === value) ? value : '__custom__'}
+            onChange={e => {
+              if (e.target.value === '__custom__') return
+              if (e.target.value === '') onChange('')
+              else onChange(e.target.value)
+            }}
+          >
+            <option value="">— No bot linked —</option>
+            {bots.map(b => (
+              <option key={b.id} value={b.name}>
+                {b.name}{b.room_id > 0 ? ` (room ${b.room_id})` : ' (offline)'}
+              </option>
+            ))}
+            {value && !bots.some(b => b.name === value) && (
+              <option value="__custom__">{value} (manual)</option>
+            )}
+          </select>
+          {!value && (
+            <p className="text-xs text-yellow-500 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" /> No bot linked — team cannot launch without a bot
+            </p>
+          )}
+          {value && !bots.some(b => b.name === value) && (
+            <input
+              className="flex h-8 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              value={value}
+              onChange={e => onChange(e.target.value)}
+              placeholder="Bot name (not in list)"
+            />
+          )}
+        </div>
+      ) : (
+        <input
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          placeholder="Name of bot in hotel"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        />
+      )}
     </div>
   )
 }
@@ -1126,6 +1205,133 @@ function FlowSelector({ flows, existingIds, onSelect }) {
       <option value="">+ Link flow</option>
       {available.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
     </select>
+  )
+}
+
+// ── Room Templates Section ────────────────────────────────────────────────
+
+function RoomTemplatesSection({ teamId, isDev, members }) {
+  const [templates, setTemplates] = useState([])
+  const [adding, setAdding] = useState(false)
+  const [form, setForm] = useState({ bot_name: '', room_id: '202', x: '0', y: '0', rot: '2' })
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api(`/api/agents/teams/${teamId}/templates`)
+      setTemplates(d.templates || [])
+    } catch {}
+  }, [teamId])
+
+  useEffect(() => { load() }, [load])
+
+  const botNames = [...new Set(members.filter(m => m.bot_name?.trim()).map(m => m.bot_name))]
+
+  async function handleAdd(e) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await api(`/api/agents/teams/${teamId}/templates`, {
+        method: 'POST',
+        body: JSON.stringify({ ...form, room_id: Number(form.room_id), x: Number(form.x), y: Number(form.y), rot: Number(form.rot) })
+      })
+      setAdding(false)
+      setForm({ bot_name: '', room_id: '202', x: '0', y: '0', rot: '2' })
+      load()
+    } catch(err) { alert(err.message) } finally { setSaving(false) }
+  }
+
+  async function handleDelete(id) {
+    await api(`/api/agents/teams/${teamId}/templates/${id}`, { method: 'DELETE' })
+    load()
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
+          <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> Room Templates
+        </h3>
+        {isDev && !adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+          >
+            <Plus className="w-3 h-3" /> Add
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <form onSubmit={handleAdd} className="mb-3 p-3 rounded-lg border border-border bg-card/50 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Bot</label>
+              {botNames.length > 0 ? (
+                <select required value={form.bot_name}
+                  onChange={e => setForm(f => ({...f, bot_name: e.target.value}))}
+                  className="flex h-7 w-full rounded border border-input bg-card px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring">
+                  <option value="">Select bot…</option>
+                  {botNames.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              ) : (
+                <input required value={form.bot_name}
+                  onChange={e => setForm(f => ({...f, bot_name: e.target.value}))}
+                  className="flex h-7 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="Bot name" />
+              )}
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Room ID</label>
+              <input type="number" required value={form.room_id}
+                onChange={e => setForm(f => ({...f, room_id: e.target.value}))}
+                className="flex h-7 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {[['x', 'X'], ['y', 'Y'], ['rot', 'Rot (0-7)']].map(([key, label]) => (
+              <div key={key} className="space-y-1">
+                <label className="text-xs text-muted-foreground">{label}</label>
+                <input type="number" value={form[key]}
+                  onChange={e => setForm(f => ({...f, [key]: e.target.value}))}
+                  className="flex h-7 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={() => setAdding(false)}
+              className="h-6 px-2 text-xs border border-input rounded hover:bg-secondary transition-colors">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="h-6 px-2 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1">
+              {saving && <Loader2 className="w-3 h-3 animate-spin" />} Save
+            </button>
+          </div>
+        </form>
+      )}
+
+      {templates.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No room templates. {isDev ? 'Add templates to specify bot spawn coordinates per room.' : ''}
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {templates.map(t => (
+            <div key={t.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-card/50 text-xs">
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-foreground">{t.bot_name}</span>
+                <span className="text-muted-foreground">room {t.room_id}</span>
+                <span className="text-muted-foreground font-mono">x={t.x} y={t.y} rot={t.rot}</span>
+              </div>
+              {isDev && (
+                <button onClick={() => handleDelete(t.id)} className="text-muted-foreground hover:text-destructive transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
