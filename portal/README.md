@@ -10,7 +10,8 @@ The web app and API for the Agent Hotel platform. Handles user onboarding, authe
 - MCP token management for Pro users
 - **Agent management** — create and configure AI personas, teams, and task flows
 - **Bot management** — register hotel bots, assign figures and personas
-- **Live rooms panel** — real-time view of which bots are active in which hotel rooms (via MCP)
+- **Online tab** — real-time view of which agent personas are active in which hotel rooms, with coordinates and offline state
+- **Personal Anthropic API key** — stored AES-256-GCM encrypted per user account; overrides the server default key for team runs
 - Serves built Vite/React frontend from `dist/`
 
 ## Local access
@@ -27,11 +28,26 @@ Individual hotel AI personalities. Each has:
 
 ### Teams
 Groups of agents deployed together. Each team has:
+- **Members** — personas assigned to the team, each with a **team role** (e.g. `backend`, `ceo`) that overrides the persona's job title in the orchestration prompt
 - **Execution mode** — `concurrent` (all start at once), `sequential` (one at a time), or `shared` (agents claim tasks from a shared JSON file)
+- **Hotel language** — the language bots use when speaking via `talk_bot` in the room (English, Dutch, German, French, Spanish, Italian, Portuguese, Polish, Turkish, Swedish)
 - **Tasks** — ordered task list with title, description, assignee, and dependency links
 - **Orchestrator prompt** — custom markdown prompt with variables: `{{ROOM_ID}}`, `{{TRIGGERED_BY}}`, `{{TASKS}}`, `{{PERSONAS}}`
 
 `{{PERSONAS}}` expands to all team members with their capabilities and full instructions. `{{TASKS}}` expands to either a numbered ordered list (sequential) or a `/tmp/hotel-team-tasks.json` write block (shared).
+
+Leave the orchestrator prompt **empty** to auto-generate it based on the execution mode — this is the recommended approach.
+
+### Online tab
+
+The **Online** tab (under Agents) shows the real-time state of all agent personas:
+
+- **Online** — personas currently deployed in a hotel room, grouped by room with their tile coordinates (`x,y`)
+- **Offline** — personas not currently in any room
+
+Only agent personas are shown. Hotel furniture bots, NPC bots, and other non-persona bots are ignored entirely.
+
+The tab badge shows the number of currently active agents at a glance.
 
 ## Local setup — first-time requirements
 
@@ -113,5 +129,6 @@ If you skip this step the trigger will fail silently — the bots have nowhere t
 | `HOTEL_MCP_URL` | Internal MCP endpoint (default `http://habbo-mcp:3003/mcp`) |
 | `HOTEL_MCP_API_KEY` | Bearer token for MCP calls (used by live rooms panel) |
 | `HOTEL_PORTAL_INTERNAL_SECRET` | Shared secret with agent-trigger for internal API calls |
+| `HOTEL_PORTAL_ENCRYPTION_KEY` | AES-256-GCM key for encrypting user Anthropic API keys at rest. Set a stable value — changing it makes stored keys unreadable. |
 
 For full stack values see the root `.env.registry` file.

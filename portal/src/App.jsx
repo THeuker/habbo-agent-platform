@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { HabboFigure } from './components/HabboFigure'
-import { AgentDashboard } from './components/AgentDashboard'
+import { AgentDashboard, AccountView } from './components/AgentDashboard'
 import {
   Home, Bot, Key, Users, LogOut, Hotel,
   Eye, EyeOff, Loader2, AlertCircle, CheckCircle,
   Wifi, WifiOff, Copy, Check, Trash2, RefreshCw,
-  Edit
+  Edit, Settings, Square, User
 } from 'lucide-react'
 
 // ── API helper ────────────────────────────────────────────────────────────
@@ -350,7 +350,16 @@ function AuthButton({ busy, label, busyLabel }) {
 
 function Dashboard({ me, setMe }) {
   const [activeTab, setActiveTab] = useState('home')
+  const [activeTeam, setActiveTeam] = useState(null)
+  const [stopping, setStopping] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  async function stopTeam() {
+    setStopping(true)
+    try { await api('/api/agents/stop', { method: 'POST' }) }
+    catch { /* ignore */ }
+    finally { setStopping(false) }
+  }
   const [hotelStatus, setHotelStatus] = useState({ loading: true, socket_online: false, reason: '', checked_url: '' })
   const [figureTypes, setFigureTypes] = useState(FALLBACK_FIGURE_TYPES)
 
@@ -452,9 +461,32 @@ function Dashboard({ me, setMe }) {
               Join Hotel
             </button>
 
-            {/* User avatar + logout */}
+            {/* Active team indicator */}
+            {activeTeam && (
+              <div className="hidden sm:flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-lg px-2.5 py-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
+                <span className="text-xs text-green-400 font-medium">Room {activeTeam.roomId}</span>
+                <button
+                  onClick={stopTeam}
+                  disabled={stopping}
+                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 ml-1 transition-colors disabled:opacity-50"
+                  title="Stop team"
+                >
+                  <Square className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
+            {/* User avatar + account settings */}
             {me.figure && <HabboFigure figure={me.figure} size="sm" animate={false} className="hidden sm:block" />}
-            <span className="text-sm text-muted-foreground hidden sm:block">{me.username}</span>
+            <button
+              onClick={() => setActiveTab('account')}
+              className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors group"
+              title="Account settings"
+            >
+              {me.username}
+              <Settings className="w-3.5 h-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
+            </button>
             <button onClick={handleLogout} disabled={busy}
               className="flex items-center gap-1.5 h-8 px-3 text-xs border border-border rounded-md hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
               <LogOut className="w-3 h-3" />
@@ -483,7 +515,10 @@ function Dashboard({ me, setMe }) {
           <HomeTab me={me} hotelStatus={hotelStatus} onJoinHotel={handleJoinHotel} busy={busy} />
         )}
         {activeTab === 'agents' && (
-          <AgentDashboard me={me} />
+          <AgentDashboard me={me} onActiveTeamChange={setActiveTeam} />
+        )}
+        {activeTab === 'account' && (
+          <AccountView me={me} />
         )}
         {activeTab === 'bots' && (
           <BotsTab figureTypes={figureTypes} />

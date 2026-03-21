@@ -81,6 +81,20 @@ async function findBotIdByName(name: string): Promise<number | null> {
 const PORTAL_URL = (process.env.PORTAL_URL || process.env.portal_url || "http://agent-portal:3000").replace(/\/$/, "");
 const PORTAL_INTERNAL_SECRET = process.env.PORTAL_INTERNAL_SECRET ?? "";
 
+async function fetchUserAnthropicKey(portalUserId: number): Promise<string | null> {
+  if (!portalUserId) return null;
+  try {
+    const res = await fetch(`${PORTAL_URL}/api/internal/user/${portalUserId}/api-key/anthropic`, {
+      headers: { "X-Internal-Secret": PORTAL_INTERNAL_SECRET },
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { ok: boolean; api_key: string | null };
+    return data.api_key ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function log(line: string) {
   const entry = `[${new Date().toISOString()}] ${line}\n`;
   process.stdout.write(entry);
@@ -171,7 +185,7 @@ interface RoomTemplate {
 }
 
 interface TeamConfig {
-  team: { id: number; name: string; description: string; orchestrator_prompt: string; execution_mode: string; tasks_json: string };
+  team: { id: number; name: string; description: string; orchestrator_prompt: string; execution_mode: string; tasks_json: string; language: string };
   members: TeamMember[];
   flow: { name: string; description: string; tasks_json: string } | null;
   templates: RoomTemplate[];
@@ -255,76 +269,133 @@ Do NOT run tasks concurrently. Each agent receives the previous task's result as
   return ''
 }
 
-function buildPromptFromConfig(config: TeamConfig, roomId: number, triggeredBy: string): string {
-  const templateNote = (botName: string): string => {
-    const tpl = config.templates.find(t => t.bot_name === botName && t.room_id === roomId);
-    if (tpl) return `\n**Room placement**: deploy at x=${tpl.x}, y=${tpl.y}, rot=${tpl.rot} in room ${roomId}`;
-    return `\n**Room placement**: deploy anywhere in room ${roomId}`;
-  };
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English', nl: 'Dutch', de: 'German', fr: 'French', es: 'Spanish',
+  it: 'Italian', pt: 'Portuguese', pl: 'Polish', tr: 'Turkish', sv: 'Swedish',
+}
 
-  const memberSections = config.members.map(m => {
-    const titleParts = [m.team_role, m.persona_role].filter(Boolean)
-    const header = `## Agent: ${m.name}${titleParts.length ? ` (${titleParts.join(' · ')})` : ''} — bot: "${m.bot_name}"`
-    const capSection = m.capabilities?.trim()
-      ? `\n### Capabilities\n${m.capabilities.trim()}`
-      : ''
-    const personalitySection = m.prompt?.trim()
-      ? `\n### Personality & Hotel Setup\n${m.prompt.trim()}`
-      : ''
-    return `${header}${capSection}${personalitySection}\n${templateNote(m.bot_name)}`
-  }).join("\n\n");
+function buildPromptFromConfig(config: TeamConfig, roomId: number, triggeredBy: string): string {
+  const mode = config.team.execution_mode || 'concurrent'
+  const tasksBlock = renderTasksBlock(config, roomId)
+  const lang = config.team.language || 'en'
+  const langName = LANGUAGE_NAMES[lang] || lang
+  const langInstruction = `\n\nIMPORTANT: Always communicate in ${langName} when using talk_bot to speak in the hotel room.`
 
   const flowSection = config.flow
     ? `\n## Flow: ${config.flow.name}\n${config.flow.description}\n`
     : "";
 
-  const tasksBlock = renderTasksBlock(config, roomId)
-  const mode = config.team.execution_mode || 'concurrent'
+  // Build a clean team roster for the orchestrator — capabilities only, no reactive-chat persona
+  const rosterLines = config.members.map(m => {
+    const tpl = config.templates.find(t => t.bot_name === m.bot_name && t.room_id === roomId)
+    const placement = tpl
+      ? `x=${tpl.x}, y=${tpl.y}, rot=${tpl.rot}`
+      : `anywhere in room ${roomId}`
+    const titleParts = [m.team_role, m.persona_role].filter(Boolean)
+    const title = titleParts.length ? ` (${titleParts.join(' · ')})` : ''
+    const caps = m.capabilities?.trim()
+      ? `\n  Capabilities:\n${m.capabilities.trim().split('\n').map(l => `    ${l}`).join('\n')}`
+      : ''
+    return `- **${m.name}**${title} — hotel bot: "${m.bot_name}", deploy at: ${placement}${caps}`
+  }).join('\n\n')
 
-  let orchestratorBase = config.team.orchestrator_prompt
-  if (!orchestratorBase) {
-    if (mode === 'shared') {
-      orchestratorBase = `You are the orchestrator for team "{{TEAM_NAME}}".
-Target room: {{ROOM_ID}}
-Triggered by: {{TRIGGERED_BY}}
+  // Subagent prompt template block — tells orchestrator how to write each subagent's prompt
+  const subagentTemplate = config.members.map(m => {
+    const tpl = config.templates.find(t => t.bot_name === m.bot_name && t.room_id === roomId)
+    const placement = tpl
+      ? `x=${tpl.x}, y=${tpl.y}, rot=${tpl.rot}`
+      : `anywhere`
+    return `### Subagent prompt for ${m.name}
+\`\`\`
+You are ${m.name}, a ${m.persona_role || m.team_role || 'team member'} working as part of team "${config.team.name}" in Habbo Hotel room ${roomId}.
 
-## Step 1: Check hotel state
-Call list_bots — find all team bots, note their bot_id and room_id.
+Your hotel bot name is "${m.bot_name}".
+- Use the deploy_bot MCP tool to place yourself in the room (${placement}) if not already there.
+- Use talk_bot to communicate progress and results in the hotel room.
+- Always speak in ${langName} when using talk_bot.
 
-{{TASKS}}
+[INSERT SPECIFIC TASK HERE]
 
-## Step 3: Spawn agents concurrently (single message, all Agent calls at once)
-{{PERSONAS}}
+When done: announce your completion in ${langName} via talk_bot (e.g. "✅ Task finished: [brief summary]"), then return your findings as text.
+\`\`\``
+  }).join('\n\n')
 
-## Step 4: Report
-When all agents finish, read \`/tmp/hotel-team-tasks.json\` and summarise: tasks completed, messages exchanged, results.`
-    } else if (mode === 'sequential') {
-      orchestratorBase = `You are the orchestrator for team "{{TEAM_NAME}}".
-Target room: {{ROOM_ID}}
-Triggered by: {{TRIGGERED_BY}}
+  const doneStep = `
+## Final step: Announce completion
+After ALL subagents have finished, use talk_bot (as any available bot) to announce in ${langName} that the entire team has completed all tasks. Keep it short and clear (1-2 sentences).`
 
-{{TASKS}}
-
-{{PERSONAS}}`
-    } else {
-      orchestratorBase = `You are the orchestrator for team "{{TEAM_NAME}}".
-Target room: {{ROOM_ID}}
-Triggered by: {{TRIGGERED_BY}}
-
-Launch all agents CONCURRENTLY in a single Agent tool call.
-
-{{PERSONAS}}
-
-Launch all agents in ONE message.`
-    }
+  // If team has a custom orchestrator prompt, use it with variable substitution
+  if (config.team.orchestrator_prompt?.trim()) {
+    return config.team.orchestrator_prompt
+      .replaceAll("{{TEAM_NAME}}", config.team.name)
+      .replaceAll("{{ROOM_ID}}", String(roomId))
+      .replaceAll("{{TRIGGERED_BY}}", triggeredBy)
+      .replaceAll("{{TASKS}}", tasksBlock)
+      .replaceAll("{{PERSONAS}}", rosterLines + flowSection)
+      + langInstruction
   }
 
-  return orchestratorBase
-    .replaceAll("{{TEAM_NAME}}", config.team.name)
-    .replaceAll("{{ROOM_ID}}", String(roomId))
-    .replaceAll("{{TRIGGERED_BY}}", triggeredBy)
-    .replaceAll("{{TASKS}}", tasksBlock)
-    .replaceAll("{{PERSONAS}}", memberSections + flowSection);
+  // Auto-generate orchestrator prompt based on execution mode
+  if (mode === 'shared') {
+    return `You are the orchestrator for team "${config.team.name}".
+Room: ${roomId}. Triggered by: ${triggeredBy}.
+All hotel room communication must be in ${langName}.
+
+## Team
+${rosterLines}
+${flowSection}
+${tasksBlock}
+
+## Step 3: Spawn subagents concurrently
+Spawn ONE subagent per team member using the Agent tool — all in a single message (parallel).
+Each subagent is a Claude agent that uses MCP tools to work in the hotel.
+
+${subagentTemplate}
+
+Replace [INSERT SPECIFIC TASK HERE] with the task(s) claimed from the shared task list that are assigned to that agent (or best match their capabilities).
+
+## Step 4: Report
+When all agents complete, read \`/tmp/hotel-team-tasks.json\` and summarise results.
+${doneStep}`
+
+  } else if (mode === 'sequential') {
+    return `You are the orchestrator for team "${config.team.name}".
+Room: ${roomId}. Triggered by: ${triggeredBy}.
+All hotel room communication must be in ${langName}.
+
+## Team
+${rosterLines}
+${flowSection}
+${tasksBlock}
+
+## Execution
+Spawn ONE subagent at a time using the Agent tool. Wait for each to finish before spawning the next.
+Each subagent is a Claude agent that uses MCP tools to work in the hotel.
+
+${subagentTemplate}
+
+Assign tasks to the agent whose capabilities best match. Work through all tasks in order.
+${doneStep}`
+
+  } else {
+    // concurrent (default)
+    return `You are the orchestrator for team "${config.team.name}".
+Room: ${roomId}. Triggered by: ${triggeredBy}.
+All hotel room communication must be in ${langName}.
+
+## Team
+${rosterLines}
+${flowSection}
+
+## Your job
+Spawn ALL team members as Claude subagents CONCURRENTLY — use the Agent tool, all calls in a single message.
+Each subagent uses MCP tools to deploy their hotel bot and work in the room.
+
+${subagentTemplate}
+
+Spawn all agents in ONE message (parallel). Wait for all to complete, then summarise.
+${doneStep}`
+  }
 }
 
 async function buildPromptFromPack(config: PackConfig): Promise<string> {
@@ -354,7 +425,7 @@ This ensures each agent is visually represented by their hotel bot in the room.`
   return basePrompt + injectionBlock;
 }
 
-function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string): Promise<string> {
+function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string, userApiKey?: string | null, onChild?: (child: ReturnType<typeof spawn>) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     if (existsSync(STOP_FILE)) unlinkSync(STOP_FILE);
 
@@ -363,7 +434,7 @@ function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string)
       cwd: PROJECT_DIR,
       env: {
         ...process.env,
-        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
+        ANTHROPIC_API_KEY: userApiKey || (process.env.ANTHROPIC_API_KEY ?? ""),
         MCP_API_KEY: process.env.MCP_API_KEY ?? "",
         HABBO_HOOK_ENABLED: "true",
         HABBO_HOOK_TRANSPORT: process.env.HABBO_HOOK_TRANSPORT ?? "remote",
@@ -373,6 +444,7 @@ function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string)
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    onChild?.(child);
     child.stdin.write(prompt);
     child.stdin.end();
 
@@ -479,7 +551,26 @@ function runOrchestrator(roomId: number, from: string): Promise<string> {
 
 // ── State ───────────────────────────────────────────────────────────────────
 
-let activeTeam: { roomId: number; startTime: Date; from: string } | null = null;
+let activeTeam: { roomId: number; startTime: Date; from: string; child: ReturnType<typeof spawn> | null } | null = null;
+
+function killActiveTeam() {
+  if (!activeTeam) return;
+  writeFileSync(STOP_FILE, new Date().toISOString());
+  // Update shared task file so subagents stop claiming new tasks
+  try {
+    const taskFile = "/tmp/hotel-team-tasks.json";
+    if (existsSync(taskFile)) {
+      const tasks = JSON.parse(readFileSync(taskFile, "utf8"));
+      writeFileSync(taskFile, JSON.stringify({ ...tasks, stop: true }, null, 2));
+    }
+  } catch { /* ignore */ }
+  // Kill the main orchestrator process — subagent claude processes will be orphaned
+  // but they'll exit when they check stop: true in the task file
+  if (activeTeam.child) {
+    try { activeTeam.child.kill("SIGTERM"); } catch { /* already dead */ }
+  }
+  activeTeam = null;
+}
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
@@ -543,9 +634,8 @@ const server = Bun.serve({
     }
 
     if (url.pathname === "/reset" && req.method === "POST") {
-      activeTeam = null;
-      if (existsSync(STOP_FILE)) unlinkSync(STOP_FILE);
-      return Response.json({ ok: true, message: "State reset." });
+      killActiveTeam();
+      return Response.json({ ok: true, message: "Team stopped." });
     }
 
     // ── Hotel narrator endpoint (called by hotel_narrator.mjs hook) ─────────
@@ -581,6 +671,7 @@ const server = Bun.serve({
       let body: {
         team_id?: number; flow_id?: number | null; room_id?: number; triggered_by?: string; portal_url?: string;
         pack_source_url?: string; role_assignments?: Record<string, string>; pack_id?: number;
+        portal_user_id?: number;
       };
       try {
         body = await req.json();
@@ -613,10 +704,15 @@ const server = Bun.serve({
         const knownBots = Object.values(packConfig.role_assignments).filter(Boolean);
         writeNarratorBotsMap(knownBots);
 
-        activeTeam = { roomId: packConfig.room_id, startTime: new Date(), from: packConfig.triggered_by };
+        const packUserApiKey = await fetchUserAnthropicKey(Number(body.portal_user_id) || 0);
+        if (packUserApiKey) log(`[trigger] Pack using API key from portal user ${body.portal_user_id}`);
+
+        activeTeam = { roomId: packConfig.room_id, startTime: new Date(), from: packConfig.triggered_by, child: null };
         log(`[trigger] Pack ${packConfig.pack_id} started in room ${packConfig.room_id} by ${packConfig.triggered_by}`);
 
-        runOrchestratorWithPrompt(prompt, packConfig.room_id, packConfig.triggered_by)
+        runOrchestratorWithPrompt(prompt, packConfig.room_id, packConfig.triggered_by, packUserApiKey, (child) => {
+          if (activeTeam) activeTeam.child = child;
+        })
           .then((summary) => { activeTeam = null; log(`[trigger] Pack ${packConfig.pack_id} completed: ${summary.slice(0, 100)}`); })
           .catch((err: Error) => { activeTeam = null; log(`[trigger] Pack ${packConfig.pack_id} error: ${err.message}`); });
 
@@ -628,6 +724,7 @@ const server = Bun.serve({
       const flowId = body.flow_id ? Number(body.flow_id) : null;
       const roomId = Number(body.room_id) || 202;
       const triggeredBy = body.triggered_by ?? "portal";
+      const portalUserId = Number(body.portal_user_id) || 0;
 
       if (!teamId) {
         return Response.json({ ok: false, error: "team_id required" }, { status: 400 });
@@ -637,17 +734,25 @@ const server = Bun.serve({
         return Response.json({ ok: false, error: `Team already active in room ${activeTeam.roomId}. Stop it first.` }, { status: 409 });
       }
 
-      // Fetch team config from portal
+      // Fetch team config + user API key in parallel
       let config: TeamConfig;
+      let userApiKey: string | null = null;
       try {
-        config = await fetchTeamConfig(teamId, flowId);
+        [config, userApiKey] = await Promise.all([
+          fetchTeamConfig(teamId, flowId),
+          fetchUserAnthropicKey(portalUserId),
+        ]);
       } catch (err: any) {
         log(`[trigger] Failed to fetch team config: ${err.message}`);
         return Response.json({ ok: false, error: `Could not load team config: ${err.message}` }, { status: 502 });
       }
 
+      if (userApiKey) {
+        log(`[trigger] Using API key from portal user ${portalUserId}`);
+      }
+
       const prompt = buildPromptFromConfig(config, roomId, triggeredBy);
-      activeTeam = { roomId, startTime: new Date(), from: triggeredBy };
+      activeTeam = { roomId, startTime: new Date(), from: triggeredBy, child: null };
       log(`[trigger] Team "${config.team.name}" started in room ${roomId} by ${triggeredBy}`);
 
       // Write known bot names so hotel_narrator.mjs can map subagent prompts → personas
@@ -655,7 +760,9 @@ const server = Bun.serve({
       writeNarratorBotsMap(knownBots);
 
       // Run in background
-      runOrchestratorWithPrompt(prompt, roomId, triggeredBy)
+      runOrchestratorWithPrompt(prompt, roomId, triggeredBy, userApiKey, (child) => {
+        if (activeTeam) activeTeam.child = child;
+      })
         .then((summary) => {
           activeTeam = null;
           log(`[trigger] Team "${config.team.name}" completed: ${summary.slice(0, 100)}`);
@@ -682,7 +789,7 @@ const server = Bun.serve({
       }
 
       const roomId = 202;
-      activeTeam = { roomId, startTime: new Date(), from };
+      activeTeam = { roomId, startTime: new Date(), from, child: null };
       log(`[voice] Team gestart door ${from}`);
 
       runOrchestrator(roomId, from)
@@ -724,7 +831,7 @@ const server = Bun.serve({
           return twiml(`Team already active in room ${activeTeam.roomId}. Send "stop team" first.`);
         }
 
-        activeTeam = { roomId, startTime: new Date(), from };
+        activeTeam = { roomId, startTime: new Date(), from, child: null };
         log(`[trigger] Team started in room ${roomId} by ${from}`);
 
         // Run orchestrator in background — reply to Twilio immediately

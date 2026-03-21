@@ -43,6 +43,7 @@ const PORTAL_SMTP_PASS = process.env.PORTAL_SMTP_PASS || '';
 const PORTAL_SMTP_FROM = (process.env.PORTAL_SMTP_FROM || 'Agent Hotel <no-reply@hotel.local>').trim();
 const PORTAL_MCP_TOKEN_TTL_DAYS = Number.parseInt(process.env.PORTAL_MCP_TOKEN_TTL_DAYS || '365', 10);
 const PORTAL_MCP_DEFAULT_TENANT = (process.env.PORTAL_MCP_DEFAULT_TENANT || 'default').trim();
+const PORTAL_ENCRYPTION_KEY = (process.env.PORTAL_ENCRYPTION_KEY || '').trim();
 
 const db = mysql.createPool({
   host: process.env.DB_HOST || 'mysql',
@@ -290,6 +291,7 @@ async function ensurePortalSchema() {
   await db.execute(`ALTER TABLE agent_teams ADD COLUMN IF NOT EXISTS role_assignments JSON;`);
   await db.execute(`ALTER TABLE agent_teams ADD COLUMN IF NOT EXISTS execution_mode VARCHAR(20) NOT NULL DEFAULT 'concurrent';`);
   await db.execute(`ALTER TABLE agent_teams ADD COLUMN IF NOT EXISTS tasks_json MEDIUMTEXT NOT NULL DEFAULT '[]';`);
+  await db.execute(`ALTER TABLE agent_teams ADD COLUMN IF NOT EXISTS language VARCHAR(10) NOT NULL DEFAULT 'en';`);
   await db.execute(`ALTER TABLE agent_personas ADD COLUMN IF NOT EXISTS role VARCHAR(64) NOT NULL DEFAULT '' AFTER name;`);
   await db.execute(`ALTER TABLE agent_personas ADD COLUMN IF NOT EXISTS capabilities TEXT NOT NULL DEFAULT '' AFTER role;`);
   await db.execute(`ALTER TABLE agent_personas ADD COLUMN IF NOT EXISTS figure TEXT NOT NULL DEFAULT '' AFTER figure_type;`);
@@ -392,10 +394,64 @@ async function ensurePortalSchema() {
       UNIQUE KEY uq_pack_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS portal_user_api_keys (
+      id INT NOT NULL AUTO_INCREMENT,
+      portal_user_id INT NOT NULL,
+      provider VARCHAR(32) NOT NULL DEFAULT 'anthropic',
+      api_key_encrypted TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_user_provider (portal_user_id, provider),
+      CONSTRAINT fk_puak_user FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 }
 
 function sha256(input) {
   return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+// ─── AES-256-GCM encryption for sensitive user data (API keys) ────────────────
+function getEncryptionKey() {
+  if (PORTAL_ENCRYPTION_KEY) {
+    return crypto.createHash('sha256').update(PORTAL_ENCRYPTION_KEY).digest(); // 32 bytes
+  }
+  // Fallback: derive from JWT secret (not ideal, but functional when no dedicated key is set)
+  return crypto.createHash('sha256').update(JWT_SECRET + ':apikey-enc').digest();
+}
+
+function encryptApiKey(plaintext) {
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Format: iv(24 hex) + ':' + tag(32 hex) + ':' + ciphertext(hex)
+  return iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+function decryptApiKey(ciphertext) {
+  try {
+    const key = getEncryptionKey();
+    const [ivHex, tagHex, dataHex] = ciphertext.split(':');
+    if (!ivHex || !tagHex || !dataHex) throw new Error('invalid format');
+    const iv = Buffer.from(ivHex, 'hex');
+    const tag = Buffer.from(tagHex, 'hex');
+    const data = Buffer.from(dataHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(data, undefined, 'utf8') + decipher.final('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function maskApiKey(key) {
+  if (!key || key.length < 8) return '••••••••';
+  return key.slice(0, 7) + '••••••••••••' + key.slice(-4);
 }
 
 function createPasswordResetToken() {
@@ -711,7 +767,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const habboUser = await createHabboUser(username);
     const passwordHash = await bcrypt.hash(password, 12);
 
-    await db.execute(
+    const [insertResult] = await db.execute(
       'INSERT INTO portal_users (email, username, password_hash, habbo_user_id, habbo_username) VALUES (?, ?, ?, ?, ?)',
       [email, username, passwordHash, habboUser.id, habboUser.username]
     );
@@ -720,7 +776,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       email,
       username,
       habbo_user_id: habboUser.id,
-      habbo_username: habboUser.username
+      habbo_username: habboUser.username,
+      portal_user_id: insertResult.insertId
     });
 
     return res.json({
@@ -760,7 +817,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     email: user.email,
     username: user.username,
     habbo_user_id: user.habbo_user_id,
-    habbo_username: user.habbo_username
+    habbo_username: user.habbo_username,
+    portal_user_id: user.id
   });
 
   return res.json({
@@ -874,6 +932,10 @@ app.post('/api/auth/logout', (_req, res) => {
 app.get('/api/auth/me', authRequired, async (req, res) => {
   const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
   const [[habboUser]] = await db.execute('SELECT look FROM users WHERE id = ? LIMIT 1', [req.user.habbo_user_id]);
+  const [[keyRow]] = await db.execute(
+    'SELECT id FROM portal_user_api_keys WHERE portal_user_id = ? AND provider = ? LIMIT 1',
+    [portalUser?.id, 'anthropic']
+  );
 
   res.json({
     ok: true,
@@ -883,9 +945,81 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
       habbo_username: req.user.habbo_username,
       ai_tier: portalUser?.ai_tier || 'basic',
       is_developer: portalUser?.is_developer || 0,
-      figure: habboUser?.look || null
+      figure: habboUser?.look || null,
+      has_anthropic_key: !!keyRow
     }
   });
+});
+
+// ─── Account API Keys ─────────────────────────────────────────────────────────
+
+app.get('/api/account/api-keys', authRequired, async (req, res) => {
+  const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+  if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+
+  const [rows] = await db.execute(
+    'SELECT provider, api_key_encrypted, updated_at FROM portal_user_api_keys WHERE portal_user_id = ?',
+    [portalUser.id]
+  );
+
+  res.json({
+    ok: true,
+    keys: rows.map(r => {
+      const plain = decryptApiKey(r.api_key_encrypted);
+      return { provider: r.provider, masked: plain ? maskApiKey(plain) : '(unreadable)', updated_at: r.updated_at };
+    })
+  });
+});
+
+app.post('/api/account/api-keys', authRequired, async (req, res) => {
+  const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+  if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+
+  const { provider = 'anthropic', api_key } = req.body;
+  if (!api_key || typeof api_key !== 'string' || api_key.trim().length < 10) {
+    return res.status(400).json({ error: 'Invalid API key' });
+  }
+
+  const encrypted = encryptApiKey(api_key.trim());
+
+  await db.execute(
+    `INSERT INTO portal_user_api_keys (portal_user_id, provider, api_key_encrypted)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE api_key_encrypted = VALUES(api_key_encrypted), updated_at = CURRENT_TIMESTAMP`,
+    [portalUser.id, provider, encrypted]
+  );
+
+  res.json({ ok: true, message: 'API key saved' });
+});
+
+app.delete('/api/account/api-keys/:provider', authRequired, async (req, res) => {
+  const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+  if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+
+  await db.execute(
+    'DELETE FROM portal_user_api_keys WHERE portal_user_id = ? AND provider = ?',
+    [portalUser.id, req.params.provider]
+  );
+
+  res.json({ ok: true, message: 'API key removed' });
+});
+
+// ─── Internal: get decrypted API key for a portal user ────────────────────────
+app.get('/api/internal/user/:portalUserId/api-key/:provider', async (req, res) => {
+  const secret = req.headers['x-internal-secret'];
+  if (PORTAL_INTERNAL_SECRET && secret !== PORTAL_INTERNAL_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const [rows] = await db.execute(
+    'SELECT api_key_encrypted FROM portal_user_api_keys WHERE portal_user_id = ? AND provider = ? LIMIT 1',
+    [req.params.portalUserId, req.params.provider]
+  );
+
+  if (!rows.length) return res.json({ ok: true, api_key: null });
+
+  const plain = decryptApiKey(rows[0].api_key_encrypted);
+  res.json({ ok: true, api_key: plain });
 });
 
 app.get('/api/mcp/tokens', authRequired, async (req, res) => {
@@ -1022,6 +1156,15 @@ app.post('/api/hotel/join', authRequired, async (req, res) => {
     ok: true,
     login_url: `${HABBO_BASE_URL}?sso=${ticket}`
   });
+});
+
+app.get('/api/hotel/rooms', authRequired, async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT id, name, owner_id FROM rooms ORDER BY id ASC LIMIT 200'
+    );
+    res.json({ ok: true, rooms: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/hotel/bots', authRequired, async (req, res) => {
@@ -1249,11 +1392,11 @@ app.get('/api/agents/teams', authRequired, async (req, res) => {
 
 app.post('/api/agents/teams', authRequired, devRequired, async (req, res) => {
   try {
-    const { name, description, orchestrator_prompt, pack_source_url, role_assignments, execution_mode, tasks_json } = req.body;
+    const { name, description, orchestrator_prompt, pack_source_url, role_assignments, execution_mode, tasks_json, language } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
     const [result] = await db.execute(
-      'INSERT INTO agent_teams (name, description, orchestrator_prompt, pack_source_url, role_assignments, execution_mode, tasks_json, created_by_user_id) VALUES (?,?,?,?,?,?,?,?)',
-      [name.trim(), description || '', orchestrator_prompt || '', pack_source_url || null, role_assignments ? JSON.stringify(role_assignments) : null, execution_mode || 'concurrent', JSON.stringify(tasks_json || []), req.user.habbo_user_id]
+      'INSERT INTO agent_teams (name, description, orchestrator_prompt, pack_source_url, role_assignments, execution_mode, tasks_json, language, created_by_user_id) VALUES (?,?,?,?,?,?,?,?,?)',
+      [name.trim(), description || '', orchestrator_prompt || '', pack_source_url || null, role_assignments ? JSON.stringify(role_assignments) : null, execution_mode || 'concurrent', JSON.stringify(tasks_json || []), language || 'en', req.user.habbo_user_id]
     );
     res.json({ ok: true, id: result.insertId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1280,10 +1423,10 @@ app.get('/api/agents/teams/:id', authRequired, async (req, res) => {
 
 app.put('/api/agents/teams/:id', authRequired, devRequired, async (req, res) => {
   try {
-    const { name, description, orchestrator_prompt, pack_source_url, role_assignments, execution_mode, tasks_json } = req.body;
+    const { name, description, orchestrator_prompt, pack_source_url, role_assignments, execution_mode, tasks_json, language } = req.body;
     await db.execute(
-      'UPDATE agent_teams SET name=?, description=?, orchestrator_prompt=?, pack_source_url=?, role_assignments=?, execution_mode=?, tasks_json=? WHERE id=?',
-      [name, description || '', orchestrator_prompt || '', pack_source_url || null, role_assignments ? JSON.stringify(role_assignments) : null, execution_mode || 'concurrent', JSON.stringify(tasks_json || []), req.params.id]
+      'UPDATE agent_teams SET name=?, description=?, orchestrator_prompt=?, pack_source_url=?, role_assignments=?, execution_mode=?, tasks_json=?, language=? WHERE id=?',
+      [name, description || '', orchestrator_prompt || '', pack_source_url || null, role_assignments ? JSON.stringify(role_assignments) : null, execution_mode || 'concurrent', JSON.stringify(tasks_json || []), language || 'en', req.params.id]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1367,6 +1510,7 @@ app.post('/api/agents/packs/:id/trigger', authRequired, async (req, res) => {
         role_assignments: roleAssignments,
         room_id: pack.room_id,
         triggered_by: req.user.habbo_username,
+        portal_user_id: (await getPortalUserByHabboUserId(req.user.habbo_user_id))?.id,
       })
     });
     const data = await r.json().catch(() => ({}));
@@ -1451,6 +1595,11 @@ app.post('/api/agents/teams/:id/trigger', authRequired, async (req, res) => {
     const [[team]] = await db.execute('SELECT id, name, pack_source_url, role_assignments FROM agent_teams WHERE id=?', [req.params.id]);
     if (!team) return res.status(404).json({ error: 'Team not found' });
 
+    // Validate room exists in hotel
+    const resolvedRoomId = Number(room_id) || 202;
+    const [[room]] = await db.execute('SELECT id, name FROM rooms WHERE id = ? LIMIT 1', [resolvedRoomId]);
+    if (!room) return res.status(400).json({ error: `Room ${resolvedRoomId} does not exist in the hotel. Create it first or use a valid room ID.` });
+
     // Validate all members have a bot linked (skip in pack mode — role_assignments handles bot mapping)
     if (!team.pack_source_url) {
       const [members] = await db.execute(
@@ -1467,7 +1616,28 @@ app.post('/api/agents/teams/:id/trigger', authRequired, async (req, res) => {
           error: `Cannot launch: ${unlinked.map(m => `"${m.name}"`).join(', ')} ${unlinked.length === 1 ? 'has' : 'have'} no bot linked. Edit the persona(s) to assign a hotel bot.`
         });
       }
+
+      // Validate bots are not already active in a different room
+      const botNames = members.map(m => m.bot_name).filter(Boolean);
+      if (botNames.length > 0) {
+        const placeholders = botNames.map(() => '?').join(',');
+        const [activeBots] = await db.execute(
+          `SELECT name, room_id FROM bots WHERE name IN (${placeholders}) AND room_id > 0`,
+          botNames
+        );
+        const wrongRoom = activeBots.filter(b => b.room_id !== resolvedRoomId);
+        if (wrongRoom.length > 0) {
+          const conflictRoom = wrongRoom[0].room_id;
+          const names = wrongRoom.map(b => `"${b.name}"`).join(', ');
+          return res.status(400).json({
+            error: `Team can't start in room ${resolvedRoomId} — ${names} ${wrongRoom.length === 1 ? 'is' : 'are'} already active in room ${conflictRoom}. Stop the current session or trigger the correct room.`
+          });
+        }
+      }
     }
+
+    // Always look up portal_user_id from DB — don't rely on JWT (old sessions won't have it)
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
 
     const r = await fetch(`${AGENT_TRIGGER_URL}/trigger`, {
       method: 'POST',
@@ -1481,6 +1651,7 @@ app.post('/api/agents/teams/:id/trigger', authRequired, async (req, res) => {
         room_id: Number(room_id) || 202,
         triggered_by: req.user.username,
         portal_url: process.env.PORTAL_PUBLIC_URL || `http://agent-portal:3000`,
+        portal_user_id: portalUser?.id,
       })
     });
     const data = await r.json().catch(() => ({}));
@@ -1611,14 +1782,24 @@ app.get('/api/agents/status', authRequired, async (req, res) => {
       const personaMap = {};
       for (const p of personas) personaMap[p.bot_name?.toLowerCase()] = p;
 
-      liveBots = allBots
+      const enriched = allBots
         .filter(b => b.room_id > 0)
         .map(b => ({
           ...b,
           room_name: roomNames[b.room_id] || null,
           ...(personaMap[b.name?.toLowerCase()] || {}),
           is_agent: !!personaMap[b.name?.toLowerCase()],
-        }))
+        }));
+
+      // Deduplicate by name+room: prefer the entry with an actual position (x>0 or y>0)
+      const seen = new Map();
+      for (const b of enriched) {
+        const key = `${b.name?.toLowerCase()}:${b.room_id}`;
+        const existing = seen.get(key);
+        if (!existing || (b.x > 0 || b.y > 0)) seen.set(key, b);
+      }
+
+      liveBots = [...seen.values()]
         .sort((a, b) => (b.is_agent ? 1 : 0) - (a.is_agent ? 1 : 0) || a.name.localeCompare(b.name));
     } catch (e) { /* MCP unreachable — return empty */ }
 
@@ -1672,6 +1853,7 @@ app.get('/login', (req, res) => {
   if (sessionUser) {
     return res.redirect('/app');
   }
+  res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(indexPath);
 });
 
@@ -1680,10 +1862,15 @@ app.get('/app', (req, res) => {
   if (!sessionUser) {
     return res.redirect('/login');
   }
+  res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(indexPath);
 });
 
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, 'dist'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-store');
+  },
+}));
 app.get('*', (_req, res) => {
   res.redirect('/login');
 });

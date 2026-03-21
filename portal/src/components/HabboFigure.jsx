@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 
-const DIRECTIONS = [2, 3, 4, 3, 2, 1, 0, 1]
-// Unique directions to preload (avoid duplicates)
-const UNIQUE_DIRS = [...new Set(DIRECTIONS)] // [2, 3, 4, 1, 0]
+const DIRECTIONS = [0, 1, 2, 3, 4, 5, 6, 7]
+// All 8 directions — preload all frames for instant switching
+const UNIQUE_DIRS = DIRECTIONS
 
 export function HabboFigure({ figure, size = 'md', animate = true, className = '' }) {
   const [dirIndex, setDirIndex] = useState(0)
@@ -11,6 +11,7 @@ export function HabboFigure({ figure, size = 'md', animate = true, className = '
     sm: { width: 40, height: 64 },
     md: { width: 64, height: 110 },
     lg: { width: 80, height: 140 },
+    xl: { width: 100, height: 175 },
   }
   const { width, height } = sizes[size] || sizes.md
 
@@ -39,9 +40,12 @@ export function HabboFigure({ figure, size = 'md', animate = true, className = '
           alt=""
           style={{
             position: 'absolute',
-            inset: 0,
-            width,
-            height,
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            objectPosition: 'center center',
             imageRendering: 'pixelated',
             opacity: dir === currentDir ? 1 : 0,
             transition: 'opacity 0.06s ease',

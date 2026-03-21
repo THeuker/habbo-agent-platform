@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { HabboFigure } from './HabboFigure'
 import {
   Bot, Package, Play, Edit2, Trash2, Plus, X, Check,
-  Loader2, AlertCircle, Users, Zap, ChevronDown, ChevronUp, Square,
-  Shield, Wifi, WifiOff, Key, ServerCog, Terminal, RefreshCw,
+  Loader2, AlertCircle, AlertTriangle, Users, Zap, ChevronDown, ChevronUp, Square,
+  Shield, Wifi, WifiOff, Key, ServerCog, Terminal, RefreshCw, User, Eye, EyeOff,
 } from 'lucide-react'
 
 // ── Markdown Editor ───────────────────────────────────────────────────────
@@ -77,9 +77,172 @@ async function api(url, opts = {}) {
   return data
 }
 
+// ── Account View ──────────────────────────────────────────────────────────
+
+export function AccountView({ me, onKeyUpdated }) {
+  const [keys, setKeys] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [newKey, setNewKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [msg, setMsg] = useState(null) // { type: 'success'|'error', text }
+
+  const loadKeys = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await api('/api/account/api-keys')
+      setKeys(data.keys || [])
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message })
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadKeys() }, [loadKeys])
+
+  const anthropicKey = keys.find(k => k.provider === 'anthropic')
+
+  async function handleSave() {
+    if (!newKey.trim()) return
+    setSaving(true)
+    setMsg(null)
+    try {
+      await api('/api/account/api-keys', { method: 'POST', body: JSON.stringify({ provider: 'anthropic', api_key: newKey.trim() }) })
+      setNewKey('')
+      setMsg({ type: 'success', text: 'API key saved and encrypted.' })
+      await loadKeys()
+      onKeyUpdated?.()
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm('Remove your stored Anthropic API key?')) return
+    setDeleting(true)
+    setMsg(null)
+    try {
+      await api('/api/account/api-keys/anthropic', { method: 'DELETE' })
+      setMsg({ type: 'success', text: 'API key removed.' })
+      await loadKeys()
+      onKeyUpdated?.()
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
+      {/* Profile */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2"><User className="w-4 h-4" /> Profile</h2>
+        <div className="bg-card border border-border rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-3">
+            {me?.figure && <HabboFigure figure={me.figure} size="sm" animate={false} />}
+            <div>
+              <p className="text-sm font-medium text-foreground">{me?.habbo_username}</p>
+              <p className="text-xs text-muted-foreground">{me?.email}</p>
+            </div>
+            {me?.is_developer && (
+              <span className="ml-auto text-xs bg-primary/10 text-primary border border-primary/20 rounded px-2 py-0.5">Developer</span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* API Keys */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2"><Key className="w-4 h-4" /> Anthropic API Key</h2>
+        <div className="bg-card border border-border rounded-xl p-4 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Your personal key is used when you trigger agent teams. It overrides the server default so your usage is billed to your own Anthropic account.
+            The key is stored AES-256-GCM encrypted — it is never stored in plain text.
+          </p>
+
+          {msg && (
+            <div className={`text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${msg.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+              {msg.type === 'success' ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+              {msg.text}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+          ) : anthropicKey ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between bg-background rounded-lg border border-border px-3 py-2">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Current key</p>
+                  <p className="text-sm font-mono text-foreground">{anthropicKey.masked}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Updated {new Date(anthropicKey.updated_at).toLocaleDateString()}</p>
+                </div>
+                <div className="flex items-center gap-1.5 ml-4">
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-400/50 rounded px-2 py-1 transition-colors disabled:opacity-50"
+                  >
+                    {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                    Remove
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">To replace, enter a new key below and save.</p>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <AlertCircle className="w-3.5 h-3.5 text-yellow-400" />
+              No personal key stored — server default key will be used.
+            </div>
+          )}
+
+          {/* Add / replace key */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-foreground">{anthropicKey ? 'Replace key' : 'Add your key'}</label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  value={newKey}
+                  onChange={e => setNewKey(e.target.value)}
+                  placeholder="sk-ant-api03-..."
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 pr-10"
+                  onKeyDown={e => e.key === 'Enter' && handleSave()}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey(v => !v)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <button
+                onClick={handleSave}
+                disabled={saving || !newKey.trim()}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                Save
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">Get your key at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" className="text-primary hover:underline">console.anthropic.com</a></p>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 // ── Main Dashboard Component ───────────────────────────────────────────────
 
-export function AgentDashboard({ me }) {
+export function AgentDashboard({ me, onActiveTeamChange, onStopTeam }) {
   const [tab, setTab] = useState('packs')
   const [activeTeam, setActiveTeam] = useState(null)
   const [stopping, setStopping] = useState(false)
@@ -97,7 +260,9 @@ export function AgentDashboard({ me }) {
       try {
         const res = await fetch('/api/agents/status', { credentials: 'include' })
         const d = await res.json().catch(() => ({}))
-        setActiveTeam(d.trigger?.activeTeam ?? null)
+        const team = d.trigger?.activeTeam ?? null
+        setActiveTeam(team)
+        onActiveTeamChange?.(team)
         setLiveBots((d.bots || []).filter(b => b.room_id > 0))
         if (d.mcp) setMcpStatus(d.mcp)
       } catch { setActiveTeam(null) }
@@ -145,47 +310,21 @@ export function AgentDashboard({ me }) {
     finally { setStopping(false) }
   }
 
+  const agentBotsInRooms = liveBots.filter(b => b.is_agent)
+
   const tabs = [
     { id: 'packs', label: 'Packs', icon: Package },
     { id: 'integrated', label: 'Integrated', icon: Users },
+    { id: 'online', label: 'Online', icon: Wifi, badge: agentBotsInRooms.length > 0 ? agentBotsInRooms.length : null },
     ...(me?.is_developer ? [{ id: 'developer', label: 'Developer', icon: Shield }] : []),
   ]
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <div className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-            <Bot className="w-4 h-4 text-primary" />
-          </div>
-          <div>
-            <h1 className="font-semibold text-sm text-foreground">Agent Command Center</h1>
-            <p className="text-xs text-muted-foreground">Orchestration Hub</p>
-          </div>
-          <div className="ml-auto flex items-center gap-3">
-            {/* Live status + stop */}
-            {activeTeam && (
-              <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-lg px-3 py-1.5">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
-                <span className="text-xs text-green-400 font-medium">Room {activeTeam.roomId} active</span>
-                <button
-                  onClick={stopTeam}
-                  disabled={stopping}
-                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-400/50 rounded px-2 py-0.5 ml-1 transition-colors disabled:opacity-50"
-                >
-                  {stopping ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
-                  Stop
-                </button>
-              </div>
-            )}
-            {me?.figure && <HabboFigure figure={me.figure} size="sm" animate={false} />}
-            <span className="text-sm text-muted-foreground">{me?.habbo_username}</span>
-          </div>
-        </div>
-        {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-4 flex gap-1 pb-0">
-          {tabs.map(({ id, label, icon: Icon }) => (
+    <div className="bg-background">
+      {/* Sub-tabs */}
+      <div className="border-b border-border bg-card/30">
+        <div className="max-w-6xl mx-auto px-4 flex gap-1">
+          {tabs.map(({ id, label, icon: Icon, badge }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
@@ -197,6 +336,11 @@ export function AgentDashboard({ me }) {
             >
               <Icon className="w-3.5 h-3.5" />
               {label}
+              {badge && (
+                <span className="w-4 h-4 rounded-full bg-green-500 text-white text-[9px] font-bold flex items-center justify-center">
+                  {badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -228,69 +372,10 @@ export function AgentDashboard({ me }) {
 
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* Live rooms panel */}
-        {liveBots.length > 0 && (() => {
-          // Group bots by room_id
-          const rooms = liveBots.reduce((acc, bot) => {
-            const key = bot.room_id
-            if (!acc[key]) acc[key] = []
-            acc[key].push(bot)
-            return acc
-          }, {})
-          return (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                <p className="text-sm font-semibold text-green-400">Live rooms</p>
-                <span className="ml-auto text-xs text-muted-foreground">{Object.keys(rooms).length} room{Object.keys(rooms).length !== 1 ? 's' : ''} loaded</span>
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {Object.entries(rooms).map(([roomId, bots]) => {
-                  const agentBots = bots.filter(b => b.is_agent)
-                  const otherBots = bots.filter(b => !b.is_agent)
-                  return (
-                    <div key={roomId} className={`rounded-xl border p-4 space-y-3 ${agentBots.length > 0 ? 'border-yellow-500/25 bg-yellow-500/5' : 'border-border bg-card/50'}`}>
-                      {/* Room header */}
-                      <div className="flex items-center gap-2">
-                        <div>
-                          <p className="text-xs font-bold text-foreground">{bots[0]?.room_name || `Room ${roomId}`}</p>
-                          <p className="text-xs text-muted-foreground">#{roomId}</p>
-                        </div>
-                        <span className="ml-auto text-xs text-muted-foreground">{bots.length} bot{bots.length !== 1 ? 's' : ''}</span>
-                      </div>
-                      {/* Agent bots */}
-                      {agentBots.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {agentBots.map(bot => (
-                            <div key={bot.id} className="flex items-center gap-2">
-                              <HabboFigure figure={bot.figure || null} size="sm" animate={true} />
-                              <div>
-                                <p className="text-xs font-semibold text-foreground">{bot.name}</p>
-                                {bot.team_name && <p className="text-xs text-yellow-400/80">{bot.team_name}</p>}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {/* Other bots — compact pill list */}
-                      {otherBots.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {otherBots.map(bot => (
-                            <span key={bot.id} className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-0.5">{bot.name}</span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })()}
         {tab === 'packs' && <PacksView />}
-        {tab === 'integrated' && <IntegratedView onAfterTrigger={fetchLogs} />}
+        {tab === 'integrated' && <IntegratedView onAfterTrigger={fetchLogs} liveBots={liveBots} />}
+        {tab === 'online' && <OnlineView liveBots={liveBots} />}
         {tab === 'developer' && me?.is_developer && <DeveloperView mcpStatus={mcpStatus} logLines={logLines} logPaused={logPaused} setLogPaused={setLogPaused} />}
-
         {/* Live log panel — shown on all tabs when a team is running */}
         {activeTeam && tab !== 'developer' && (
           <LogPanel lines={logLines} paused={logPaused} onTogglePause={() => setLogPaused(p => !p)} />
@@ -458,6 +543,100 @@ function DeveloperView({ mcpStatus, logLines, logPaused, setLogPaused }) {
 
       {/* Log panel always visible in Developer tab */}
       <LogPanel lines={logLines} paused={logPaused} onTogglePause={() => setLogPaused(p => !p)} />
+    </div>
+  )
+}
+
+// ── Online View ───────────────────────────────────────────────────────────
+
+function OnlineView({ liveBots }) {
+  const [personas, setPersonas] = useState([])
+
+  useEffect(() => {
+    api('/api/agents/personas').then(d => setPersonas(d.personas || [])).catch(() => {})
+  }, [])
+
+  const onlineAgentNames = new Set(liveBots.filter(b => b.is_agent).map(b => b.name?.toLowerCase()))
+
+  const rooms = liveBots.reduce((acc, bot) => {
+    if (!bot.is_agent) return acc // only show agent bots in room cards
+    const key = bot.room_id
+    if (!acc[key]) acc[key] = []
+    acc[key].push(bot)
+    return acc
+  }, {})
+
+  const offlinePersonas = personas.filter(p => !onlineAgentNames.has(p.name?.toLowerCase()))
+  const roomCount = Object.keys(rooms).length
+  const agentCount = liveBots.filter(b => b.is_agent).length
+
+  return (
+    <div className="space-y-6">
+      {/* Online section */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          <h2 className="text-sm font-semibold text-foreground">Online</h2>
+          <span className="text-xs text-muted-foreground">
+            {agentCount} agent{agentCount !== 1 ? 's' : ''} in {roomCount} room{roomCount !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {roomCount === 0 ? (
+          <div className="rounded-xl border border-border bg-card/50 p-6 text-center text-sm text-muted-foreground">
+            No agents deployed in any room.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {Object.entries(rooms).map(([roomId, bots]) => (
+              <div key={roomId} className="rounded-xl border border-yellow-500/25 bg-yellow-500/5 p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{bots[0]?.room_name || `Room ${roomId}`}</p>
+                  <p className="text-xs text-muted-foreground">#{roomId}</p>
+                </div>
+                <div className="space-y-2">
+                  {bots.map(bot => (
+                    <div key={bot.id} className="flex items-center gap-3">
+                      <HabboFigure figure={bot.figure || bot.persona_figure || null} size="sm" animate={true} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground">{bot.persona_name || bot.name}</p>
+                        {bot.team_name && <p className="text-xs text-yellow-400/80">{bot.team_name}</p>}
+                      </div>
+                      {(bot.x != null && bot.y != null) && (
+                        <span className="text-[10px] text-muted-foreground/50 font-mono tabular-nums flex-shrink-0">
+                          {bot.x},{bot.y}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Offline section */}
+      {offlinePersonas.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-muted-foreground/40" />
+            <h2 className="text-sm font-semibold text-muted-foreground">Offline</h2>
+            <span className="text-xs text-muted-foreground">{offlinePersonas.length} agent{offlinePersonas.length !== 1 ? 's' : ''} not deployed</span>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {offlinePersonas.map(p => (
+              <div key={p.id} className="flex items-center gap-3 rounded-xl border border-border bg-card/30 px-4 py-3 opacity-50">
+                <HabboFigure figure={p.figure || null} size="sm" animate={false} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">{p.name}</p>
+                  {p.role && <p className="text-xs text-muted-foreground">{p.role}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -872,10 +1051,12 @@ function PackForm({ pack, bots, onSave, onCancel }) {
 
 // ── Integrated View ───────────────────────────────────────────────────────
 
-function IntegratedView({ onAfterTrigger }) {
+function IntegratedView({ onAfterTrigger, liveBots = [] }) {
   const [personas, setPersonas] = useState([])
   const [teams, setTeams] = useState([])
   const [bots, setBots] = useState([])
+  const [rooms, setRooms] = useState([])
+  const [selectedRoomId, setSelectedRoomId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showPersonaForm, setShowPersonaForm] = useState(false)
@@ -889,14 +1070,18 @@ function IntegratedView({ onAfterTrigger }) {
     setLoading(true)
     setError(null)
     try {
-      const [pd, bd, td] = await Promise.all([
+      const [pd, bd, td, rd] = await Promise.all([
         api('/api/agents/personas'),
         api('/api/agents/bots'),
         api('/api/agents/teams'),
+        api('/api/hotel/rooms'),
       ])
       setPersonas(pd.personas || [])
       setBots(bd.bots || [])
       setTeams(td.teams || [])
+      const roomList = rd.rooms || []
+      setRooms(roomList)
+      if (roomList.length > 0 && !selectedRoomId) setSelectedRoomId(roomList[0].id)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -914,7 +1099,7 @@ function IntegratedView({ onAfterTrigger }) {
   async function deployTeam(team) {
     setDeployingIds(prev => new Set([...prev, team.id]))
     try {
-      await api(`/api/agents/teams/${team.id}/trigger`, { method: 'POST' })
+      await api(`/api/agents/teams/${team.id}/trigger`, { method: 'POST', body: JSON.stringify({ room_id: selectedRoomId }) })
       showToast(`Team "${team.name}" deployed!`)
       // Fetch logs immediately + again after 2s/4s to catch fast crashes
       onAfterTrigger?.()
@@ -954,14 +1139,17 @@ function IntegratedView({ onAfterTrigger }) {
   }
 
   async function saveTeam(data) {
+    let teamId = editingTeam?.id
     if (editingTeam) {
       await api(`/api/agents/teams/${editingTeam.id}`, { method: 'PUT', body: JSON.stringify(data) })
     } else {
-      await api('/api/agents/teams', { method: 'POST', body: JSON.stringify(data) })
+      const r = await api('/api/agents/teams', { method: 'POST', body: JSON.stringify(data) })
+      teamId = r.id
     }
     setShowTeamForm(false)
     setEditingTeam(null)
     load()
+    return { id: teamId }
   }
 
   if (loading) return <LoadingState />
@@ -1007,6 +1195,23 @@ function IntegratedView({ onAfterTrigger }) {
           />
         )}
 
+        {/* Room selector */}
+        {rooms.length > 0 && (
+          <div className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3">
+            <Zap className="w-4 h-4 text-primary flex-shrink-0" />
+            <span className="text-xs font-medium text-foreground">Deploy room</span>
+            <select
+              value={selectedRoomId ?? ''}
+              onChange={e => setSelectedRoomId(Number(e.target.value))}
+              className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              {rooms.map(r => (
+                <option key={r.id} value={r.id}>#{r.id} — {r.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {teams.length === 0 && !showTeamForm ? (
           <EmptyState icon={Users} title="No teams yet" description="Create a team to group and deploy your integrated agents" />
         ) : (
@@ -1016,6 +1221,8 @@ function IntegratedView({ onAfterTrigger }) {
                 key={team.id}
                 team={team}
                 bots={bots}
+                liveBots={liveBots}
+                selectedRoomId={selectedRoomId}
                 deploying={deployingIds.has(team.id)}
                 onDeploy={() => deployTeam(team)}
                 onEdit={() => { setEditingTeam(team); setShowTeamForm(true) }}
@@ -1081,11 +1288,54 @@ function IntegratedView({ onAfterTrigger }) {
 
 // ── Integrated Team Card ───────────────────────────────────────────────────
 
-function IntegratedTeamCard({ team, bots = [], deploying, onDeploy, onEdit, onDelete }) {
+function IntegratedTeamCard({ team, bots = [], liveBots = [], selectedRoomId, deploying, onDeploy, onEdit, onDelete }) {
   const [expanded, setExpanded] = useState(false)
+  const [members, setMembers] = useState(null) // null = still loading
+
+  // Eagerly fetch members so we can compute room conflict warning
+  useEffect(() => {
+    api(`/api/agents/teams/${team.id}/members`)
+      .then(d => setMembers(d.members || []))
+      .catch(() => setMembers([])) // on error, don't block
+  }, [team.id])
+
+  const memberBotNames = useMemo(() => (members || []).map(m => m.bot_name).filter(Boolean), [members])
+
+  // Compute room conflict: any bot already assigned to a DIFFERENT room than selected
+  // Uses portal DB bots (reliable) not MCP liveBots (may miss DB-created bots)
+  const roomConflict = useMemo(() => {
+    if (members === null || !selectedRoomId || memberBotNames.length === 0) return null
+    const conflicts = memberBotNames.flatMap(botName => {
+      const bot = bots.find(b => b.name?.toLowerCase() === botName.toLowerCase())
+      if (bot && bot.room_id > 0 && bot.room_id !== selectedRoomId) {
+        return [{ name: botName, room_id: bot.room_id }]
+      }
+      return []
+    })
+    if (conflicts.length === 0) return null
+    const conflictRoom = conflicts[0].room_id
+    const names = conflicts.map(c => c.name).join(', ')
+    return `${names} ${conflicts.length === 1 ? 'is' : 'are'} active in room ${conflictRoom} — team can't start in room ${selectedRoomId}`
+  }, [members, memberBotNames, bots, selectedRoomId])
+
+  // Unlinked: only block when members have loaded and some have no bot linked
+  const hasUnlinked = useMemo(() => {
+    if (members === null) return false
+    return members.some(m => !m.bot_name?.trim())
+  }, [members])
+
+  const blocked = !!roomConflict || hasUnlinked
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
+    <div className={`rounded-xl border bg-card overflow-hidden ${roomConflict ? 'border-yellow-500/40' : 'border-border'}`}>
+      {/* Room conflict warning */}
+      {roomConflict && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/20 text-xs text-yellow-400">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          {roomConflict}
+        </div>
+      )}
+
       {/* Header row */}
       <div className="flex items-center gap-3 p-4">
         <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
@@ -1112,23 +1362,28 @@ function IntegratedTeamCard({ team, bots = [], deploying, onDeploy, onEdit, onDe
         </button>
         <button
           onClick={onDeploy}
-          disabled={deploying}
-          className="flex items-center gap-1.5 text-xs bg-violet-600 text-white px-3 py-1.5 rounded-md hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+          disabled={deploying || blocked}
+          title={roomConflict || undefined}
+          className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors flex-shrink-0 ${
+            blocked
+              ? 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30 cursor-not-allowed'
+              : 'bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed'
+          }`}
         >
-          {deploying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-          {deploying ? 'Deploying…' : 'Deploy'}
+          {deploying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : blocked ? <AlertTriangle className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+          {deploying ? 'Deploying…' : blocked ? 'Blocked' : 'Deploy'}
         </button>
       </div>
 
       {/* Expanded members */}
       {expanded && (
-        <IntegratedTeamMembers teamId={team.id} bots={bots} />
+        <IntegratedTeamMembers teamId={team.id} bots={bots} liveBots={liveBots} selectedRoomId={selectedRoomId} />
       )}
     </div>
   )
 }
 
-function IntegratedTeamMembers({ teamId, bots = [] }) {
+function IntegratedTeamMembers({ teamId, bots = [], liveBots = [], selectedRoomId }) {
   const [data, setData] = useState(null)
 
   useEffect(() => {
@@ -1151,6 +1406,9 @@ function IntegratedTeamMembers({ teamId, bots = [] }) {
     <div className="border-t border-border divide-y divide-border">
       {data.members.map(m => {
         const figure = bots.find(b => b.name === m.bot_name)?.figure || null
+        const liveBot = bots.find(b => b.name?.toLowerCase() === m.bot_name?.toLowerCase())
+        const inWrongRoom = liveBot && liveBot.room_id > 0 && selectedRoomId && liveBot.room_id !== selectedRoomId
+        const noBot = !m.bot_name?.trim()
         return (
           <div key={m.id} className="flex items-center gap-3 px-4 py-2.5">
             <HabboFigure figure={figure} size="sm" animate={true} />
@@ -1158,9 +1416,14 @@ function IntegratedTeamMembers({ teamId, bots = [] }) {
               <p className="text-sm font-medium text-foreground">{m.name}</p>
               {m.role && <p className="text-xs text-muted-foreground">{m.role}</p>}
             </div>
+            {noBot && (
+              <span className="text-xs bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
+                no bot linked
+              </span>
+            )}
             {m.bot_name && (
-              <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
-                {m.bot_name}
+              <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 border ${inWrongRoom ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>
+                {inWrongRoom ? `⚠ ${m.bot_name} (room ${liveBot.room_id})` : m.bot_name}
               </span>
             )}
           </div>
@@ -1172,15 +1435,39 @@ function IntegratedTeamMembers({ teamId, bots = [] }) {
 
 // ── Integrated Team Form ───────────────────────────────────────────────────
 
+const TEAM_LANGUAGES = [
+  { code: 'en', label: '🇬🇧 English' },
+  { code: 'nl', label: '🇳🇱 Dutch' },
+  { code: 'de', label: '🇩🇪 German' },
+  { code: 'fr', label: '🇫🇷 French' },
+  { code: 'es', label: '🇪🇸 Spanish' },
+  { code: 'it', label: '🇮🇹 Italian' },
+  { code: 'pt', label: '🇵🇹 Portuguese' },
+  { code: 'pl', label: '🇵🇱 Polish' },
+  { code: 'tr', label: '🇹🇷 Turkish' },
+  { code: 'sv', label: '🇸🇪 Swedish' },
+]
+
 function IntegratedTeamForm({ team, personas, onSave, onCancel }) {
   const [name, setName] = useState(team?.name || '')
   const [description, setDescription] = useState(team?.description || '')
   const [orchestratorPrompt, setOrchestratorPrompt] = useState(team?.orchestrator_prompt || '')
   const [executionMode, setExecutionMode] = useState(team?.execution_mode || 'concurrent')
+  const [language, setLanguage] = useState(team?.language || 'en')
   const parsedTasks = (() => { try { return JSON.parse(team?.tasks_json || '[]') } catch { return [] } })()
   const [tasks, setTasks] = useState(parsedTasks.length ? parsedTasks : [])
+  const [members, setMembers] = useState([]) // { id (atm.id), persona_id, name, role }
+  const [addPersonaId, setAddPersonaId] = useState('')
+  const [addRole, setAddRole] = useState('')
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState(null)
+
+  useEffect(() => {
+    if (!team?.id) return
+    api(`/api/agents/teams/${team.id}`).then(d => {
+      setMembers((d.team?.members || []).map(m => ({ id: m.id, persona_id: m.persona_id, name: m.name, role: m.role || '' })))
+    }).catch(() => {})
+  }, [team?.id])
 
   function addTask() {
     const id = `t${tasks.length + 1}`
@@ -1205,11 +1492,45 @@ function IntegratedTeamForm({ team, personas, onSave, onCancel }) {
     setSaving(true)
     setFormError(null)
     try {
-      await onSave({ name: name.trim(), description: description.trim(), orchestrator_prompt: orchestratorPrompt.trim(), execution_mode: executionMode, tasks_json: tasks })
+      const savedTeam = await onSave({ name: name.trim(), description: description.trim(), orchestrator_prompt: orchestratorPrompt.trim(), execution_mode: executionMode, tasks_json: tasks, language })
+      const teamId = savedTeam?.id || team?.id
+      if (teamId) {
+        // Sync members: fetch current from server, diff, add/remove
+        const fresh = await api(`/api/agents/teams/${teamId}`)
+        const serverMembers = fresh.team?.members || []
+        const serverIds = serverMembers.map(m => m.id)
+        const localIds = members.filter(m => m.id).map(m => m.id)
+        // Remove members that were deleted locally
+        for (const sm of serverMembers) {
+          if (!members.find(m => m.id === sm.id)) {
+            await api(`/api/agents/teams/${teamId}/members/${sm.id}`, { method: 'DELETE' })
+          }
+        }
+        // Add new members (those without an id yet)
+        for (const m of members) {
+          if (!m.id) {
+            await api(`/api/agents/teams/${teamId}/members`, { method: 'POST', body: { persona_id: m.persona_id, role: m.role } })
+          }
+        }
+      }
     } catch (e) {
       setFormError(e.message)
       setSaving(false)
     }
+  }
+
+  function addMember() {
+    if (!addPersonaId) return
+    const p = personas.find(p => String(p.id) === String(addPersonaId))
+    if (!p) return
+    if (members.find(m => String(m.persona_id) === String(addPersonaId))) return
+    setMembers(prev => [...prev, { id: null, persona_id: p.id, name: p.name, role: addRole.trim() }])
+    setAddPersonaId('')
+    setAddRole('')
+  }
+
+  function removeMember(idx) {
+    setMembers(prev => prev.filter((_, i) => i !== idx))
   }
 
   return (
@@ -1268,6 +1589,23 @@ function IntegratedTeamForm({ team, personas, onSave, onCancel }) {
           {executionMode === 'sequential' && 'The orchestrator spawns one agent at a time and waits for each to finish before starting the next.'}
           {executionMode === 'shared' && 'The orchestrator writes a shared task JSON file. Agents read it, claim tasks matching their capabilities, and write results back. Best for team collaboration.'}
         </p>
+      </div>
+
+      {/* Language selector */}
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-foreground">
+          Hotel language
+          <span className="ml-1.5 text-muted-foreground font-normal">— bots will speak this language in the room</span>
+        </label>
+        <select
+          value={language}
+          onChange={e => setLanguage(e.target.value)}
+          className="w-full bg-muted/40 border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          {TEAM_LANGUAGES.map(l => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
       </div>
 
       {/* Task editor — shown for sequential + shared modes */}
@@ -1382,11 +1720,80 @@ function IntegratedTeamForm({ team, personas, onSave, onCancel }) {
         </p>
       </div>
 
-      {personas.length > 0 && (
-        <div className="text-xs text-muted-foreground bg-secondary/50 rounded-lg px-3 py-2">
-          💡 After saving, assign agents to this team via the team detail page. Currently available: {personas.map(p => p.name).join(', ')}
+      {/* Member management */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-medium text-foreground">Team Members</label>
+          <span className="text-muted-foreground font-normal text-xs">— agents that will be spawned in this team</span>
         </div>
-      )}
+        {members.length > 0 && (
+          <div className="border border-border rounded-lg divide-y divide-border">
+            <div className="flex items-center gap-3 px-3 py-1.5 bg-muted/30 rounded-t-lg">
+              <span className="text-xs text-muted-foreground flex-1">Agent</span>
+              <div className="flex items-center gap-1 w-32">
+                <span className="text-xs text-muted-foreground">Role in team</span>
+                <div className="relative group">
+                  <span className="w-3.5 h-3.5 rounded-full bg-muted-foreground/30 text-muted-foreground flex items-center justify-center text-[9px] font-bold cursor-help select-none">i</span>
+                  <div className="absolute bottom-full right-0 mb-1.5 w-56 bg-popover border border-border rounded-md px-2.5 py-2 text-xs text-muted-foreground shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                    <p className="font-medium text-foreground mb-0.5">Team role</p>
+                    <p>This label is used by the orchestrator to assign tasks and describe what this agent does <em>in this team</em>. It overrides the agent's job title in the orchestration prompt.</p>
+                  </div>
+                </div>
+              </div>
+              <div className="w-3.5" />
+            </div>
+            {members.map((m, idx) => (
+              <div key={idx} className="flex items-center gap-3 px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-foreground">{m.name}</span>
+                  {personas.find(p => String(p.id) === String(m.persona_id))?.role && (
+                    <span className="ml-2 text-xs text-muted-foreground/60 line-through">
+                      {personas.find(p => String(p.id) === String(m.persona_id))?.role}
+                    </span>
+                  )}
+                </div>
+                <input
+                  value={m.role}
+                  onChange={e => setMembers(prev => prev.map((x, i) => i === idx ? { ...x, role: e.target.value } : x))}
+                  placeholder="e.g. backend"
+                  className="text-xs bg-background border border-border rounded px-2 py-1 text-foreground w-32 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <button type="button" onClick={() => removeMember(idx)} className="text-muted-foreground hover:text-destructive transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {personas.filter(p => !members.find(m => String(m.persona_id) === String(p.id))).length > 0 && (
+          <div className="flex gap-2 items-center">
+            <select
+              value={addPersonaId}
+              onChange={e => setAddPersonaId(e.target.value)}
+              className="flex-1 bg-muted/40 border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">+ Add agent…</option>
+              {personas.filter(p => !members.find(m => String(m.persona_id) === String(p.id))).map(p => (
+                <option key={p.id} value={p.id}>{p.name}{p.role ? ` — ${p.role}` : ''}</option>
+              ))}
+            </select>
+            <input
+              value={addRole}
+              onChange={e => setAddRole(e.target.value)}
+              placeholder="team role"
+              className="w-28 text-xs bg-background border border-border rounded-md px-2 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <button
+              type="button"
+              onClick={addMember}
+              disabled={!addPersonaId}
+              className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-40 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="flex gap-2 pt-1">
         <button
@@ -1413,7 +1820,7 @@ function PersonaCard({ persona, bots = [], expanded, onEdit, onCollapse, onSave,
     <div className={`rounded-xl border bg-card transition-colors ${expanded ? 'border-primary/40' : 'border-border'}`}>
       {/* Card row — always visible */}
       <div className="flex items-center gap-4 p-4">
-        <HabboFigure figure={figure} size="md" animate={true} />
+        <HabboFigure figure={figure} size="xl" animate={true} />
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm text-foreground">{persona.name}</p>
           {persona.role && <p className="text-xs text-muted-foreground mt-0.5">{persona.role}</p>}

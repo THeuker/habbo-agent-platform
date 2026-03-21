@@ -11,7 +11,8 @@ const GAMEDATA_DIR = process.env.GAMEDATA_DIR || '/assets/gamedata';
 const PORT = parseInt(process.env.PORT || '3005');
 
 // Canvas dimensions and avatar origin (feet position)
-const CANVAS_W  = 64;
+const PADDING_X = 16;   // extra pixels on each side to prevent side-angle clipping
+const CANVAS_W  = 64 + PADDING_X * 2;
 const CANVAS_H  = 110;
 const ORIGIN_Y  = 95;   // y of feet (from top of canvas); geometry canvas height=130, canvasOffset=114 → shift 19px
 
@@ -244,7 +245,7 @@ async function renderFigure(figureStr, direction = 2, headDirection = null) {
       // Adjusted for our 64×110 canvas (feet at ORIGIN_Y=95 instead of 114):
       //   drawX = -(asset.x)          (regPoint offset cancels out)
       //   drawY = ORIGIN_Y - asset.y  (shift feet from 114 to 95)
-      const drawX = Math.round(-(asset.x));
+      const drawX = Math.round(-(asset.x)) + PADDING_X;
       const drawY = Math.round(ORIGIN_Y - asset.y);
 
       // Draw sprite onto a temp canvas so we can tint it
@@ -285,9 +286,12 @@ app.get('/figure', async (req, res) => {
 
   const mirrorSource  = MIRROR_MAP[direction];
   const renderDir     = mirrorSource !== undefined ? mirrorSource : direction;
+  // For mirrored directions the head must also use the mirrored source direction —
+  // head sprites only exist for dirs 0-3; dirs 4-6 have no head spritesheets.
+  const renderHeadDir = mirrorSource !== undefined ? renderDir : (headDirection ?? renderDir);
 
   try {
-    const png = await renderFigure(figure, renderDir, headDirection);
+    const png = await renderFigure(figure, renderDir, renderHeadDir);
 
     let finalPng = png;
     if (mirrorSource !== undefined) {
@@ -301,7 +305,7 @@ app.get('/figure', async (req, res) => {
     }
 
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', 'public, max-age=60');
     res.send(finalPng);
   } catch (err) {
     console.error('Render error:', err.message);
