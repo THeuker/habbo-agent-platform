@@ -16,7 +16,15 @@ The web app and API for the Agent Hotel platform. Handles user onboarding, authe
 
 ## Local access
 
-Default URL: `http://127.0.0.1:3090`
+Portal host port comes from the **repo root** `.env`: `HABBO_PORTAL_PORT` (default `3090`), same value Docker Compose uses to publish `agent-portal`.
+
+Default URL: `http://127.0.0.1:3090` if `HABBO_PORTAL_PORT=3090` — keep `HABBO_PORTAL_PUBLIC_URL` in `.env` aligned when you change the port.
+
+### "Failed to fetch" in the browser
+
+- **Use the portal URL on `HABBO_PORTAL_PORT`** — API and static app are served together on that port.
+- **Optional dev proxy** (`.claude/proxy.mjs`): listens on `HABBO_PORTAL_PROXY_PORT` (default `3091`) and forwards to `127.0.0.1:${HABBO_PORTAL_PORT}`. The proxy loads repo `.env` (or use VS Code `envFile`). Start the real portal with Docker or `npm start` in `portal/` with `PORT=3000` inside the container / matching your setup.
+- **`npm run dev` (Vite)** proxies `/api` to `http://127.0.0.1:${HABBO_PORTAL_PORT}` (reads repo or `portal/` `.env`).
 
 ## Agent system concepts
 
@@ -38,6 +46,8 @@ Groups of agents deployed together. Each team has:
 
 Leave the orchestrator prompt **empty** to auto-generate it based on the execution mode — this is the recommended approach.
 
+**Agent packs** (URL-based pack triggers) remain in the API and database for backwards compatibility; the portal UI for v1 focuses on integrated teams and the marketplace, not packs.
+
 ### Online tab
 
 The **Online** tab (under Agents) shows the real-time state of all agent personas:
@@ -51,67 +61,25 @@ The tab badge shows the number of currently active agents at a glance.
 
 ## Local setup — first-time requirements
 
-### In-room AI commands require rank 7
+### In-room AI commands (admin only)
 
-The in-room commands `:set_ai_key` and `:setup_agent` are gated by the Arcturus permissions system. On a fresh database, new hotel accounts default to rank **1** which does not have these permissions — typing the command in the room will silently do nothing.
-
-**Fix — promote the hotel account to rank 7 (superadmin):**
-
-```sql
-UPDATE users SET rank = 7 WHERE username = 'yourusername';
-```
-
-Or grant the AI commands to all ranks if you want every user to be able to spawn their own bots:
-
-```sql
-UPDATE permissions SET cmd_set_ai_key = '1', cmd_setup_agent = '1', cmd_ai_help = '1';
-```
-
-**Also verify the `habbo-ai-service` migrations have been applied** (they add the permission columns — without this the commands don't exist at all):
-
-```sql
-SHOW COLUMNS FROM permissions LIKE 'cmd_set_ai_key';
-```
-
-If that returns empty the `habbo-ai-service` container hasn't run its migrations yet — make sure it started successfully with `just doctor` or `docker compose logs habbo-ai-service`.
+The in-room commands `:set_ai_key` and `:setup_agent` require rank **7** (superadmin) and are reserved for hotel administrators. Regular users manage bots through the portal UI instead.
 
 ### What requires an API key and what doesn't
-
-Not everything needs an Anthropic/OpenAI API key. Here's the breakdown:
 
 | Action | Needs API key? | Notes |
 |---|---|---|
 | Team trigger (portal button) | **No** | Uses MCP `deploy_bot` → RCON, no AI service involved |
 | `deploy_bot` MCP tool | **No** | Direct RCON to emulator |
-| `:setup_agent` in-room command | **Yes** | Spawns bot + wires it to habbo-ai-service for visitor chat |
 | Bot responding to room chat | **Yes** | habbo-ai-service calls Claude/GPT per message |
-
-**In short:** to deploy bots via the portal or MCP you only need rank 7. The API key is only required if you want hotel visitors to chat directly with a bot (using the in-room `:setup_agent` command).
-
-**In-room command flow (visitor chat bots):**
-
-```
-:set_ai_key sk-ant-api01...                            # register + verify Anthropic key
-:setup_agent Aria type:agent A friendly assistant      # spawn the bot next to you
-```
-
-Available figure types: `default`, `citizen`, `agent`, `bouncer`, `m-employee`
 
 ---
 
-### Room 202 must exist before triggering a team
+### Default team room
 
-When you trigger a team locally, agent-trigger deploys bots to room **202** by default. This room does not exist automatically — you need to create it manually once in the hotel before the first trigger.
+When you trigger a team, agent-trigger deploys bots to room **50** by default. This room ("Dark Elegant Bundle") is included in the database seed — it exists automatically on a fresh install, no manual setup needed.
 
-**Steps:**
-1. Open the hotel client (`http://127.0.0.1:1080` by default)
-2. Log in with your hotel account
-3. Create a new room — the first room you create will be assigned ID **202**
-4. After the room exists, team triggers will work
-
-If you skip this step the trigger will fail silently — the bots have nowhere to go and the orchestrator prompt receives an invalid room.
-
-> **Tip:** You only need to do this once per fresh database. If you reset the DB volume you'll need to recreate the room.
+You can override the room per-trigger from the portal UI, or change the default by editing the `room_id` in your pack/team config.
 
 ---
 
@@ -119,9 +87,11 @@ If you skip this step the trigger will fail silently — the bots have nowhere t
 
 | Variable | Description |
 |---|---|
-| `HABBO_PORTAL_PORT` | Host port to expose the portal on (default `3090`) |
+| `HABBO_PORTAL_PORT` | Host port to expose the portal on (default `3090`); used by Docker, Vite `/api` proxy, and `.claude/proxy.mjs` upstream |
+| `HABBO_PORTAL_PROXY_PORT` | Optional: listen port for `.claude/proxy.mjs` only (default `3091`); override with `PORT` |
+| `PORTAL_UPSTREAM_HOST` | Optional: upstream IP/hostname for `.claude/proxy.mjs` (default `127.0.0.1`) |
 | `HABBO_PORTAL_BASE_URL` | Public URL of the Nitro client |
-| `HABBO_PORTAL_PUBLIC_URL` | Public URL of the portal itself |
+| `HABBO_PORTAL_PUBLIC_URL` | Public URL of the portal itself (include port; should match `HABBO_PORTAL_PORT` on localhost) |
 | `HABBO_PORTAL_JWT_SECRET` | Secret for signing JWT tokens |
 | `HABBO_PORTAL_COOKIE_SECURE` | Set `true` in production (HTTPS only cookies) |
 | `HABBO_PORTAL_SMTP_*` | SMTP config for password reset emails |

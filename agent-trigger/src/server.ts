@@ -220,6 +220,20 @@ async function fetchTeamConfig(teamId: number, flowId: number | null): Promise<T
   return { team: data.team, members: data.members, flow: data.flow, templates: data.templates ?? [] };
 }
 
+async function fetchUserTeamConfig(userTeamId: number): Promise<TeamConfig> {
+  const url = `${PORTAL_URL}/api/internal/user-teams/${userTeamId}/config`;
+  const res = await fetch(url, {
+    headers: { "X-Internal-Secret": PORTAL_INTERNAL_SECRET },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch user team config (${res.status}): ${text}`);
+  }
+  const data = await res.json() as { ok: boolean; team: TeamConfig["team"]; members: TeamMember[]; flow: TeamConfig["flow"]; templates: RoomTemplate[] };
+  return { team: data.team, members: data.members, flow: data.flow, templates: data.templates ?? [] };
+}
+
 function renderTasksBlock(config: TeamConfig, roomId: number): string {
   let tasks: Array<{ id: string; title: string; description?: string; assign_to?: string; depends_on?: string[] }> = []
   try { tasks = JSON.parse(config.team.tasks_json || '[]') } catch { tasks = [] }
@@ -685,7 +699,7 @@ const server = Bun.serve({
           pack_id: Number(body.pack_id) || 0,
           pack_source_url: body.pack_source_url,
           role_assignments: body.role_assignments,
-          room_id: Number(body.room_id) || 202,
+          room_id: Number(body.room_id) || 50,
           triggered_by: body.triggered_by ?? 'portal',
         };
 
@@ -722,7 +736,7 @@ const server = Bun.serve({
 
       const teamId = Number(body.team_id);
       const flowId = body.flow_id ? Number(body.flow_id) : null;
-      const roomId = Number(body.room_id) || 202;
+      const roomId = Number(body.room_id) || 50;
       const triggeredBy = body.triggered_by ?? "portal";
       const portalUserId = Number(body.portal_user_id) || 0;
 
@@ -735,11 +749,12 @@ const server = Bun.serve({
       }
 
       // Fetch team config + user API key in parallel
+      const isUserTeam = body.user_team === true;
       let config: TeamConfig;
       let userApiKey: string | null = null;
       try {
         [config, userApiKey] = await Promise.all([
-          fetchTeamConfig(teamId, flowId),
+          isUserTeam ? fetchUserTeamConfig(teamId) : fetchTeamConfig(teamId, flowId),
           fetchUserAnthropicKey(portalUserId),
         ]);
       } catch (err: any) {
@@ -788,7 +803,7 @@ const server = Bun.serve({
         return voiceSay(`Team is al actief in kamer ${activeTeam.roomId}. Stuur een SMS met stop team om te stoppen.`);
       }
 
-      const roomId = 202;
+      const roomId = 50;
       activeTeam = { roomId, startTime: new Date(), from, child: null };
       log(`[voice] Team gestart door ${from}`);
 
@@ -825,7 +840,7 @@ const server = Bun.serve({
 
       if (body.startsWith("start team")) {
         const roomMatch = body.match(/start team\s+(\d+)/);
-        const roomId = roomMatch ? parseInt(roomMatch[1]) : 202;
+        const roomId = roomMatch ? parseInt(roomMatch[1]) : 50;
 
         if (activeTeam) {
           return twiml(`Team already active in room ${activeTeam.roomId}. Send "stop team" first.`);

@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { HabboFigure } from './components/HabboFigure'
 import { AgentDashboard, AccountView } from './components/AgentDashboard'
+import { MarketplaceView } from './components/MarketplaceView'
 import {
-  Home, Bot, Key, Users, LogOut, Hotel,
+  Home, Bot, Key, Users, LogOut, Hotel, ShoppingBag,
   Eye, EyeOff, Loader2, AlertCircle, CheckCircle,
   Wifi, WifiOff, Copy, Check, Trash2, RefreshCw,
-  Edit, Settings, Square, User
+  Edit, Settings, Square, User, ArrowUpCircle, Bell,
+  ClipboardList, X,
 } from 'lucide-react'
 
 // ── API helper ────────────────────────────────────────────────────────────
@@ -32,6 +34,18 @@ const FALLBACK_FIGURE_TYPES = {
   'agent-f':    { gender: 'F', figure: 'hd-620-12.ch-3005-64.lg-3006-96.sh-905-91.ha-3426-110.hr-3531-61.he-1601-0.ea-3169-0' },
 }
 
+// ── Build stamp (vite `define`) — proves this JS bundle is what the browser loaded ──
+
+function UiBuildFooter() {
+  const stamp = import.meta.env.VITE_UI_BUILD_STAMP || 'dev'
+  return (
+    <footer className="border-t border-border py-2 px-4 text-center text-[10px] text-muted-foreground shrink-0">
+      UI bundle <code className="text-[9px] bg-muted px-1 py-0.5 rounded">{stamp}</code>
+      {' — '}if this never changes after deploy, hard-refresh or clear site cache
+    </footer>
+  )
+}
+
 // ── Root App ──────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -53,8 +67,11 @@ export default function App() {
   }, [loading, me, path])
 
   if (loading) return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
-      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+    <div className="min-h-screen bg-background flex flex-col">
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+      <UiBuildFooter />
     </div>
   )
 
@@ -138,7 +155,8 @@ function AuthPage({ onLogin }) {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
+      <div className="flex-1 flex items-center justify-center p-4 relative">
       {/* Background decoration */}
       <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-secondary/20 pointer-events-none" />
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
@@ -308,6 +326,8 @@ function AuthPage({ onLogin }) {
           </div>
         </div>
       )}
+      </div>
+      <UiBuildFooter />
     </div>
   )
 }
@@ -353,6 +373,20 @@ function Dashboard({ me, setMe }) {
   const [activeTeam, setActiveTeam] = useState(null)
   const [stopping, setStopping] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [pendingRequestCount, setPendingRequestCount] = useState(0)
+
+  // Poll for pending upgrade requests (developers only)
+  useEffect(() => {
+    if (!me?.is_developer) return
+    function loadCount() {
+      api('/api/tier-requests?status=pending')
+        .then(d => setPendingRequestCount((d.requests || []).length))
+        .catch(() => {})
+    }
+    loadCount()
+    const id = setInterval(loadCount, 30000)
+    return () => clearInterval(id)
+  }, [me?.is_developer])
 
   async function stopTeam() {
     setStopping(true)
@@ -409,9 +443,11 @@ function Dashboard({ me, setMe }) {
 
   const tabs = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'agents', label: 'Agents', icon: Bot },
+    { id: 'agents', label: 'My Agents', icon: Bot },
+    { id: 'marketplace', label: 'Marketplace', icon: ShoppingBag },
     { id: 'bots', label: 'Bots', icon: Users },
     { id: 'mcp', label: 'MCP', icon: Key },
+    ...(me?.is_developer ? [{ id: 'requests', label: 'Requests', icon: ClipboardList, badge: pendingRequestCount }] : []),
   ]
 
   return (
@@ -424,15 +460,20 @@ function Dashboard({ me, setMe }) {
 
           {/* Tabs — desktop */}
           <nav className="hidden md:flex items-center gap-1 ml-2">
-            {tabs.map(({ id, label, icon: Icon }) => (
+            {tabs.map(({ id, label, icon: Icon, badge }) => (
               <button key={id} onClick={() => setActiveTab(id)}
-                className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                className={`relative flex items-center gap-2 px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
                   activeTab === id
                     ? 'bg-primary/10 text-primary'
                     : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                 }`}>
                 <Icon className="w-3.5 h-3.5" />
                 {label}
+                {badge > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
+                    {badge}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -497,13 +538,18 @@ function Dashboard({ me, setMe }) {
 
         {/* Mobile tabs */}
         <div className="md:hidden flex border-t border-border">
-          {tabs.map(({ id, label, icon: Icon }) => (
+          {tabs.map(({ id, label, icon: Icon, badge }) => (
             <button key={id} onClick={() => setActiveTab(id)}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-xs transition-colors ${
+              className={`relative flex-1 flex flex-col items-center gap-0.5 py-2 text-xs transition-colors ${
                 activeTab === id ? 'text-primary' : 'text-muted-foreground'
               }`}>
               <Icon className="w-4 h-4" />
               {label}
+              {badge > 0 && (
+                <span className="absolute top-1 right-2 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[8px] font-bold text-primary-foreground">
+                  {badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -514,8 +560,16 @@ function Dashboard({ me, setMe }) {
         {activeTab === 'home' && (
           <HomeTab me={me} hotelStatus={hotelStatus} onJoinHotel={handleJoinHotel} busy={busy} />
         )}
+        {activeTab === 'requests' && me?.is_developer && (
+          <UpgradeRequestsTab onCountChange={setPendingRequestCount} />
+        )}
         {activeTab === 'agents' && (
           <AgentDashboard me={me} onActiveTeamChange={setActiveTeam} />
+        )}
+        {activeTab === 'marketplace' && (
+          <div className="max-w-4xl mx-auto px-4 py-6">
+            <MarketplaceView me={me} />
+          </div>
         )}
         {activeTab === 'account' && (
           <AccountView me={me} />
@@ -527,6 +581,8 @@ function Dashboard({ me, setMe }) {
           <McpTab me={me} />
         )}
       </main>
+
+      <UiBuildFooter />
     </div>
   )
 }
@@ -535,9 +591,63 @@ function Dashboard({ me, setMe }) {
 
 function HomeTab({ me, hotelStatus, onJoinHotel, busy }) {
   const activeTier = me?.ai_tier || 'basic'
+  const [upgradeRequest, setUpgradeRequest] = useState(null)
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false)
+
+  useEffect(() => {
+    if (activeTier !== 'basic') return
+    api('/api/tier-requests/mine')
+      .then(d => setUpgradeRequest(d.request || null))
+      .catch(() => {})
+  }, [activeTier])
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+
+      {/* Upgrade CTA for basic users */}
+      {activeTier === 'basic' && (
+        upgradeRequest?.status === 'pending' ? (
+          <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <Bell className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-amber-300">Upgrade request pending</p>
+              <p className="text-xs text-amber-300/70 mt-0.5">Your request for <span className="capitalize">{upgradeRequest.requested_tier}</span> tier is being reviewed. We'll email you when it's decided.</p>
+            </div>
+          </div>
+        ) : upgradeRequest?.status === 'denied' ? (
+          <div className="flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-red-300">Upgrade request denied</p>
+              {upgradeRequest.admin_note && <p className="text-xs text-red-300/70 mt-0.5">{upgradeRequest.admin_note}</p>}
+            </div>
+            <button onClick={() => setShowUpgradeModal(true)}
+              className="shrink-0 text-xs h-8 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+              Try again
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+            <ArrowUpCircle className="w-4 h-4 text-primary shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">Want to deploy agent teams?</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Request a Pro upgrade to install and launch agents in the hotel.</p>
+            </div>
+            <button onClick={() => setShowUpgradeModal(true)}
+              className="shrink-0 text-xs h-8 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+              Request upgrade
+            </button>
+          </div>
+        )
+      )}
+
+      {showUpgradeModal && (
+        <UpgradeRequestModal
+          onClose={() => setShowUpgradeModal(false)}
+          onSubmitted={(req) => { setUpgradeRequest(req); setShowUpgradeModal(false) }}
+        />
+      )}
+
       {/* Welcome card */}
       <div className="bg-card border border-border rounded-2xl p-6">
         <div className="flex items-center gap-5">
@@ -621,22 +731,33 @@ function StatusCard({ label, value, icon: Icon, valueClassName = '' }) {
 function BotsTab({ figureTypes }) {
   const [bots, setBots] = useState([])
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState(null)
   const [editingBotId, setEditingBotId] = useState(null)
   const [editForm, setEditForm] = useState({})
   const [botBusy, setBotBusy] = useState({})
   const [botMsg, setBotMsg] = useState({})
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [botsMeta, setBotsMeta] = useState(null)
 
   const fetchBots = useCallback(async () => {
     setLoading(true)
     try {
       const d = await api('/api/hotel/bots')
       setBots(d.bots || [])
-    } catch { setBots([]) }
+      setBotsMeta(d.meta || null)
+    } catch {
+      setBots([])
+      setBotsMeta(null)
+    }
     finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { fetchBots() }, [fetchBots])
+  useEffect(() => {
+    fetchBots()
+    const t = setInterval(fetchBots, 10_000)
+    return () => clearInterval(t)
+  }, [fetchBots])
 
   function startEditBot(bot) {
     setEditingBotId(bot.id)
@@ -684,14 +805,58 @@ function BotsTab({ figureTypes }) {
     }
   }
 
+  async function syncBots() {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      const d = await api('/api/hotel/bots/sync', { method: 'POST' })
+      const parts = []
+      if (d.removed > 0) {
+        parts.push(`Removed ${d.removed} stale portal entr${d.removed !== 1 ? 'ies' : 'y'}`)
+      }
+      if (d.imported > 0) {
+        parts.push(`imported ${d.imported} bot${d.imported !== 1 ? 's' : ''}`)
+      }
+      setSyncMsg(
+        parts.length > 0
+          ? `${parts.join(' · ')}.`
+          : `Up to date (${d.totalOwned ?? 0} in your hotel inventory).`
+      )
+      await fetchBots()
+    } catch (err) {
+      setSyncMsg(err.message || 'Sync failed.')
+    }
+    setSyncing(false)
+    setTimeout(() => setSyncMsg(null), 4000)
+  }
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold text-foreground">My Bots</h2>
-        <button onClick={fetchBots} className="text-muted-foreground hover:text-foreground transition-colors">
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          {syncMsg && <span className="text-xs text-muted-foreground">{syncMsg}</span>}
+          <button onClick={syncBots} disabled={syncing}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-secondary transition-colors disabled:opacity-50">
+            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing…' : 'Sync bots'}
+          </button>
+        </div>
       </div>
+
+      {botsMeta?.rcon && !botsMeta.rcon.verified && botsMeta.rcon.roomsRequested > 0 && (
+        <div className="text-xs rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-100 px-3 py-2 space-y-1">
+          <p className="font-medium">Live bot status is not verified against the emulator</p>
+          <p className="opacity-90">
+            RCON to <code className="text-[10px]">{botsMeta.rcon.host}:{botsMeta.rcon.port}</code> failed or the
+            <code className="text-[10px]"> roomlivebots</code> command is missing — the portal falls back to MySQL/MCP only (same as before).
+            Rebuild the <code className="text-[10px]">arcturus</code> image so RCON includes <code className="text-[10px]">RoomLiveBots</code>, set <code className="text-[10px]">HABBO_RCON_ALLOWED</code> for Docker networks, restart <code className="text-[10px]">agent-portal</code>, hard-refresh the browser.
+          </p>
+          {botsMeta.rcon.lastError && (
+            <p className="text-[10px] opacity-80 font-mono break-all">Last error: {botsMeta.rcon.lastError}</p>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -704,7 +869,7 @@ function BotsTab({ figureTypes }) {
           </div>
           <p className="text-sm font-medium text-foreground">No bots deployed yet</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Use <code className="font-mono bg-muted px-1 rounded">:setup_agent</code> in the hotel to deploy a bot.
+            Bots are managed by hotel administrators.
           </p>
         </div>
       ) : (
@@ -712,17 +877,28 @@ function BotsTab({ figureTypes }) {
           {bots.map(bot => {
             const isBusy = !!botBusy[bot.id]
             const msg = botMsg[bot.id]
+            const ghost = !!bot.ghost_stale_db
+            const live = !ghost && Number(bot.live_room_id) > 0
+            const placed = !ghost && Number(bot.db_room_id) > 0
+            let statusBadgeClass = 'bg-muted text-muted-foreground border border-border'
+            let statusLabel = 'In inventory'
+            if (ghost) {
+              statusBadgeClass = 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
+              statusLabel = `Stale DB · room ${bot.stale_db_room_id || '?'}`
+            } else if (live) {
+              statusBadgeClass = 'bg-green-500/10 text-green-400 border border-green-500/20'
+              statusLabel = `Live · ${bot.live_room_name || `#${bot.live_room_id}`}`
+            } else if (placed) {
+              statusBadgeClass = 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+              statusLabel = `Placed · ${bot.db_room_name || `#${bot.db_room_id}`}`
+            }
             return (
               <div key={bot.id} className="bg-card border border-border rounded-2xl overflow-hidden">
                 {/* Bot card header */}
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-card/50">
                   <span className="font-medium text-sm text-foreground flex-1 truncate">{bot.name}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    bot.active
-                      ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                      : 'bg-muted text-muted-foreground border border-border'
-                  }`}>
-                    {bot.active ? 'Active' : 'Inactive'}
+                  <span className={`text-xs px-2 py-0.5 rounded-full max-w-[min(200px,46vw)] truncate ${statusBadgeClass}`} title={statusLabel}>
+                    {statusLabel}
                   </span>
                   <button onClick={() => startEditBot(bot)} disabled={isBusy}
                     className="h-7 px-2 text-xs border border-border rounded-md hover:bg-secondary transition-colors disabled:opacity-50 flex items-center gap-1">
@@ -743,7 +919,22 @@ function BotsTab({ figureTypes }) {
                   )}
                   <div className="flex-1 min-w-0 space-y-1">
                     <p className="text-xs text-muted-foreground">
-                      Room: <span className="text-foreground">{bot.room_name || `#${bot.room_id}`}</span>
+                      {ghost ? (
+                        <>
+                          MySQL still has <span className="text-foreground">room_id = {bot.stale_db_room_id}</span> for this bot, but the emulator is not running it in that room (duplicate row, unload race, or old data).
+                          <span className="block mt-0.5 opacity-90">Delete this portal entry or remove the extra <code className="text-[10px]">bots</code> row — only the live row should remain.</span>
+                        </>
+                      ) : live ? (
+                        <>Currently in (loaded room): <span className="text-foreground">{bot.live_room_name || `#${bot.live_room_id}`}</span></>
+                      ) : placed ? (
+                        <>In hotel DB, placed in: <span className="text-foreground">{bot.db_room_name || `#${bot.db_room_id}`}</span>
+                          <span className="block mt-0.5 opacity-80">Room may be unloaded — open it in the hotel to go &quot;Live&quot; here.</span></>
+                      ) : Number(bot.config_room_id) > 0 ? (
+                        <>Portal spawn target: <span className="text-foreground">{bot.room_name || `#${bot.config_room_id}`}</span>
+                          <span className="block mt-0.5 opacity-80">Bot is still in your inventory (not placed in a room).</span></>
+                      ) : (
+                        <>In inventory — use <span className="text-foreground">Place in room</span> in the hotel client.</>
+                      )}
                     </p>
                     {bot.motto && (
                       <p className="text-xs text-muted-foreground italic truncate">"{bot.motto}"</p>
@@ -759,6 +950,19 @@ function BotsTab({ figureTypes }) {
             )
           })}
         </div>
+      )}
+
+      {botsMeta && (
+        <p className="text-[10px] text-muted-foreground">
+          Build: portal v{botsMeta.portalVersion} · {botsMeta.distMainJs}
+          {botsMeta.rcon?.roomsRequested > 0 && (
+            <span>
+              {' '}
+              · RCON {botsMeta.rcon.verified ? 'ok' : 'failed'}{' '}
+              ({botsMeta.rcon.roomsOk}/{botsMeta.rcon.roomsRequested} rooms)
+            </span>
+          )}
+        </p>
       )}
 
       {/* Edit Bot Modal */}
@@ -827,6 +1031,279 @@ function BotsTab({ figureTypes }) {
           </div>
         )
       })()}
+    </div>
+  )
+}
+
+// ── Upgrade Request Modal (user) ─────────────────────────────────────────
+
+function UpgradeRequestModal({ onClose, onSubmitted }) {
+  const [tier, setTier] = useState('pro')
+  const [motivation, setMotivation] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setBusy(true); setError('')
+    try {
+      const data = await api('/api/tier-requests', {
+        method: 'POST',
+        body: JSON.stringify({ requested_tier: tier, motivation }),
+      })
+      onSubmitted({ id: data.id, requested_tier: tier, motivation, status: 'pending', admin_note: '' })
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
+      onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Request Tier Upgrade</h2>
+            <p className="text-xs text-muted-foreground mt-1">Tell us what you'd like to do — an admin will review your request.</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">Requested tier</label>
+            <div className="flex gap-2">
+              {['pro', 'enterprise'].map(t => (
+                <button
+                  key={t} type="button"
+                  onClick={() => setTier(t)}
+                  className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors capitalize ${
+                    tier === t
+                      ? 'bg-primary/10 border-primary/40 text-primary'
+                      : 'border-border text-muted-foreground hover:text-foreground hover:bg-secondary'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">
+              Why do you need this? <span className="text-muted-foreground font-normal">(optional)</span>
+            </label>
+            <textarea
+              rows={4}
+              value={motivation}
+              onChange={e => setMotivation(e.target.value)}
+              placeholder="e.g. I want to deploy a Sprint Team in the hotel for daily stand-ups…"
+              className="flex w-full rounded-lg border border-input bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/50 resize-none"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} disabled={busy}
+              className="flex-1 h-10 rounded-lg border border-border text-sm hover:bg-secondary transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={busy}
+              className="flex-1 h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors">
+              {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+              {busy ? 'Sending…' : 'Send Request'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── Upgrade Requests Tab (developer) ─────────────────────────────────────
+
+function UpgradeRequestsTab({ onCountChange }) {
+  const [requests, setRequests] = useState([])
+  const [filter, setFilter] = useState('pending')
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState({})
+  const [reviewing, setReviewing] = useState(null) // { id, decision }
+  const [adminNote, setAdminNote] = useState('')
+  const [toast, setToast] = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const d = await api(`/api/tier-requests?status=${filter}`)
+      const list = d.requests || []
+      setRequests(list)
+      if (filter === 'pending') onCountChange(list.length)
+    } catch { setRequests([]) }
+    finally { setLoading(false) }
+  }, [filter, onCountChange])
+
+  useEffect(() => { load() }, [load])
+
+  function showToast(msg, type = 'success') {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 3500)
+  }
+
+  async function submitReview(requestId, decision) {
+    setBusy(b => ({ ...b, [requestId]: true }))
+    try {
+      await api(`/api/tier-requests/${requestId}/review`, {
+        method: 'POST',
+        body: JSON.stringify({ decision, admin_note: adminNote }),
+      })
+      setReviewing(null)
+      setAdminNote('')
+      showToast(`Request ${decision}.`)
+      load()
+    } catch (err) {
+      showToast(err.message, 'error')
+    } finally {
+      setBusy(b => ({ ...b, [requestId]: false }))
+    }
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-foreground">Tier Upgrade Requests</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Review and approve or deny user upgrade requests.</p>
+        </div>
+        <button onClick={load} className="text-muted-foreground hover:text-foreground transition-colors">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {toast && (
+        <div className={`rounded-lg px-4 py-2.5 text-sm ${toast.type === 'error' ? 'bg-red-500/10 text-red-300 border border-red-500/30' : 'bg-green-500/10 text-green-300 border border-green-500/30'}`}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Filter pills */}
+      <div className="flex gap-2">
+        {['pending', 'approved', 'denied'].map(s => (
+          <button key={s} onClick={() => setFilter(s)}
+            className={`px-3 py-1 text-xs rounded-full border transition-colors capitalize ${
+              filter === s ? 'bg-primary/10 border-primary/40 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+            }`}>
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : requests.length === 0 ? (
+        <div className="bg-card border border-border rounded-2xl p-8 text-center">
+          <ClipboardList className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <p className="text-sm text-muted-foreground">No {filter} requests.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {requests.map(req => (
+            <div key={req.id} className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-foreground">{req.username}</span>
+                      <span className="text-xs text-muted-foreground">{req.email}</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      <span className="text-[11px] bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                        Current: <span className="font-medium text-foreground capitalize">{req.current_tier}</span>
+                      </span>
+                      <span className="text-[11px] bg-primary/10 text-primary px-2 py-0.5 rounded capitalize">
+                        → {req.requested_tier}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground ml-auto">
+                        {new Date(req.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    {req.motivation && (
+                      <p className="text-xs text-muted-foreground mt-2 italic leading-relaxed">"{req.motivation}"</p>
+                    )}
+                    {req.admin_note && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        <span className="font-medium not-italic text-foreground/80">Admin note:</span> {req.admin_note}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Status badge for non-pending */}
+                  {req.status !== 'pending' && (
+                    <span className={`shrink-0 text-xs px-2.5 py-1 rounded-lg capitalize ${
+                      req.status === 'approved' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                    }`}>
+                      {req.status}
+                    </span>
+                  )}
+                </div>
+
+                {/* Approve/deny buttons for pending */}
+                {req.status === 'pending' && (
+                  reviewing?.id === req.id ? (
+                    <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+                      <input
+                        placeholder={`Optional note to user (${reviewing.decision})…`}
+                        value={adminNote}
+                        onChange={e => setAdminNote(e.target.value)}
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => { setReviewing(null); setAdminNote('') }}
+                          className="flex-1 h-8 text-xs rounded-md border border-border hover:bg-secondary transition-colors">
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => submitReview(req.id, reviewing.decision)}
+                          disabled={!!busy[req.id]}
+                          className={`flex-1 h-8 text-xs rounded-md font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 ${
+                            reviewing.decision === 'approved'
+                              ? 'bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20'
+                              : 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20'
+                          }`}>
+                          {busy[req.id] && <Loader2 className="w-3 h-3 animate-spin" />}
+                          Confirm {reviewing.decision}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 mt-3 pt-3 border-t border-border/60">
+                      <button onClick={() => { setReviewing({ id: req.id, decision: 'denied' }); setAdminNote('') }}
+                        className="flex-1 h-8 text-xs rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors">
+                        Deny
+                      </button>
+                      <button onClick={() => { setReviewing({ id: req.id, decision: 'approved' }); setAdminNote('') }}
+                        className="flex-1 h-8 text-xs rounded-md bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 transition-colors font-medium">
+                        Approve
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

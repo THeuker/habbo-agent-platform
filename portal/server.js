@@ -1,5 +1,6 @@
 import path from 'node:path';
 import net from 'node:net';
+import { readFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -17,6 +18,22 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+let portalPkgVersion = '0.1.0';
+try {
+  portalPkgVersion = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
+} catch { /* ignore */ }
+
+function distMainJsFingerprint() {
+  try {
+    const html = readFileSync(path.join(__dirname, 'dist/index.html'), 'utf8');
+    const m = html.match(/\/assets\/(index-[a-zA-Z0-9_-]+\.js)/);
+    return m ? m[1] : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const HABBO_BASE_URL = process.env.HABBO_BASE_URL || 'http://127.0.0.1:1080';
@@ -44,6 +61,7 @@ const PORTAL_SMTP_FROM = (process.env.PORTAL_SMTP_FROM || 'Agent Hotel <no-reply
 const PORTAL_MCP_TOKEN_TTL_DAYS = Number.parseInt(process.env.PORTAL_MCP_TOKEN_TTL_DAYS || '365', 10);
 const PORTAL_MCP_DEFAULT_TENANT = (process.env.PORTAL_MCP_DEFAULT_TENANT || 'default').trim();
 const PORTAL_ENCRYPTION_KEY = (process.env.PORTAL_ENCRYPTION_KEY || '').trim();
+const PORTAL_ADMIN_EMAIL = (process.env.PORTAL_ADMIN_EMAIL || '').trim().toLowerCase();
 
 const db = mysql.createPool({
   host: process.env.DB_HOST || 'mysql',
@@ -136,6 +154,24 @@ async function devRequired(req, res, next) {
   } catch (err) {
     res.status(500).json({ error: 'Internal error' });
   }
+}
+
+function tierGate(minTier) {
+  const tierRank = { basic: 0, pro: 1, enterprise: 2 };
+  return async (req, res, next) => {
+    try {
+      const [[row]] = await db.execute(
+        'SELECT ai_tier FROM portal_users WHERE habbo_user_id = ?',
+        [req.user.habbo_user_id]
+      );
+      if ((tierRank[row?.ai_tier] || 0) < (tierRank[minTier] || 0)) {
+        return res.status(403).json({ error: `Requires ${minTier} tier or higher` });
+      }
+      next();
+    } catch (err) {
+      res.status(500).json({ error: 'Internal error' });
+    }
+  };
 }
 
 function getSessionUser(req) {
@@ -295,6 +331,8 @@ async function ensurePortalSchema() {
   await db.execute(`ALTER TABLE agent_personas ADD COLUMN IF NOT EXISTS role VARCHAR(64) NOT NULL DEFAULT '' AFTER name;`);
   await db.execute(`ALTER TABLE agent_personas ADD COLUMN IF NOT EXISTS capabilities TEXT NOT NULL DEFAULT '' AFTER role;`);
   await db.execute(`ALTER TABLE agent_personas ADD COLUMN IF NOT EXISTS figure TEXT NOT NULL DEFAULT '' AFTER figure_type;`);
+  // Marketplace personas are shared templates — bot_name is per-user and must not be stored here.
+  await db.execute(`UPDATE agent_personas SET bot_name = '' WHERE bot_name != ''`);
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS agent_team_members (
@@ -384,7 +422,7 @@ async function ensurePortalSchema() {
       id INT NOT NULL AUTO_INCREMENT,
       name VARCHAR(64) NOT NULL,
       description VARCHAR(255) NOT NULL DEFAULT '',
-      room_id INT NOT NULL DEFAULT 202,
+      room_id INT NOT NULL DEFAULT 50,
       pack_source_url TEXT NOT NULL DEFAULT '',
       role_assignments JSON NOT NULL DEFAULT ('{}'),
       created_by_user_id INT,
@@ -392,6 +430,62 @@ async function ensurePortalSchema() {
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       UNIQUE KEY uq_pack_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // ── User-scoped tables (marketplace fork model) ─────────────────────────────
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS user_personas (
+      id INT NOT NULL AUTO_INCREMENT,
+      portal_user_id INT NOT NULL,
+      source_persona_id INT,
+      name VARCHAR(64) NOT NULL,
+      description VARCHAR(255) NOT NULL DEFAULT '',
+      prompt MEDIUMTEXT NOT NULL DEFAULT '',
+      role VARCHAR(64) NOT NULL DEFAULT '',
+      capabilities TEXT NOT NULL DEFAULT '',
+      figure_type VARCHAR(64) NOT NULL DEFAULT 'agent-m',
+      figure TEXT NOT NULL DEFAULT '',
+      bot_name VARCHAR(25) NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_user_persona_name (portal_user_id, name),
+      CONSTRAINT fk_up_user FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS user_teams (
+      id INT NOT NULL AUTO_INCREMENT,
+      portal_user_id INT NOT NULL,
+      source_team_id INT,
+      name VARCHAR(64) NOT NULL,
+      description VARCHAR(255) NOT NULL DEFAULT '',
+      orchestrator_prompt MEDIUMTEXT NOT NULL DEFAULT '',
+      execution_mode VARCHAR(20) NOT NULL DEFAULT 'concurrent',
+      tasks_json MEDIUMTEXT NOT NULL DEFAULT '[]',
+      language VARCHAR(10) NOT NULL DEFAULT 'en',
+      default_room_id INT NOT NULL DEFAULT 50,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_user_team_name (portal_user_id, name),
+      CONSTRAINT fk_ut_user FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS user_team_members (
+      id INT NOT NULL AUTO_INCREMENT,
+      user_team_id INT NOT NULL,
+      user_persona_id INT NOT NULL,
+      role VARCHAR(64) NOT NULL DEFAULT '',
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_utm (user_team_id, user_persona_id),
+      CONSTRAINT fk_utm_team FOREIGN KEY (user_team_id) REFERENCES user_teams(id) ON DELETE CASCADE,
+      CONSTRAINT fk_utm_persona FOREIGN KEY (user_persona_id) REFERENCES user_personas(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -406,6 +500,24 @@ async function ensurePortalSchema() {
       PRIMARY KEY (id),
       UNIQUE KEY uq_user_provider (portal_user_id, provider),
       CONSTRAINT fk_puak_user FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tier_upgrade_requests (
+      id INT NOT NULL AUTO_INCREMENT,
+      portal_user_id INT NOT NULL,
+      requested_tier ENUM('pro', 'enterprise') NOT NULL DEFAULT 'pro',
+      motivation TEXT NOT NULL DEFAULT '',
+      status ENUM('pending', 'approved', 'denied') NOT NULL DEFAULT 'pending',
+      admin_note TEXT NOT NULL DEFAULT '',
+      reviewed_by_user_id INT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_tur_user (portal_user_id),
+      KEY idx_tur_status (status),
+      CONSTRAINT fk_tur_user FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 }
@@ -503,6 +615,88 @@ async function sendPasswordResetEmail({ toEmail, username, resetUrl }) {
       </p>
       <p>If you did not request this, you can ignore this email.</p>
     `
+  });
+}
+
+async function sendWelcomeEmail({ toEmail, username }) {
+  if (!mailTransport) return;
+  const loginUrl = `${PORTAL_PUBLIC_URL}/login`;
+  await mailTransport.sendMail({
+    from: PORTAL_SMTP_FROM,
+    to: toEmail,
+    subject: 'Welcome to Agent Hotel Portal!',
+    text: [
+      `Hi ${username},`,
+      '',
+      'Your Agent Hotel Portal account is ready. You can log in and start exploring:',
+      loginUrl,
+      '',
+      'Your account starts on the Basic tier. You can request a Pro upgrade from inside the portal once you are ready to deploy agent teams.',
+      '',
+      'See you in the hotel!',
+    ].join('\n'),
+    html: `
+      <p>Hi ${username},</p>
+      <p>Your Agent Hotel Portal account is ready. <a href="${loginUrl}">Log in now</a> and start exploring.</p>
+      <p>Your account starts on the <strong>Basic</strong> tier. You can request a Pro upgrade from inside the portal once you are ready to deploy agent teams.</p>
+      <p>See you in the hotel!</p>
+    `,
+  });
+}
+
+async function sendUpgradeRequestNotification({ request, user }) {
+  if (!mailTransport || !PORTAL_ADMIN_EMAIL) return;
+  const reviewUrl = `${PORTAL_PUBLIC_URL}/app`;
+  await mailTransport.sendMail({
+    from: PORTAL_SMTP_FROM,
+    to: PORTAL_ADMIN_EMAIL,
+    subject: `[Agent Hotel] Tier upgrade request from ${user.username}`,
+    text: [
+      `New tier upgrade request`,
+      '',
+      `User:       ${user.username} (${user.email})`,
+      `Requested:  ${request.requested_tier}`,
+      `Motivation: ${request.motivation || '(none)'}`,
+      '',
+      `Review it in the portal: ${reviewUrl}`,
+    ].join('\n'),
+    html: `
+      <p><strong>New tier upgrade request</strong></p>
+      <table cellpadding="4">
+        <tr><td><strong>User</strong></td><td>${user.username} (${user.email})</td></tr>
+        <tr><td><strong>Requested tier</strong></td><td>${request.requested_tier}</td></tr>
+        <tr><td><strong>Motivation</strong></td><td>${request.motivation || '<em>none</em>'}</td></tr>
+      </table>
+      <p><a href="${reviewUrl}">Review in the portal</a></p>
+    `,
+  });
+}
+
+async function sendUpgradeDecisionEmail({ toEmail, username, status, requestedTier, adminNote }) {
+  if (!mailTransport) return;
+  const approved = status === 'approved';
+  await mailTransport.sendMail({
+    from: PORTAL_SMTP_FROM,
+    to: toEmail,
+    subject: `Your ${requestedTier} upgrade request was ${approved ? 'approved' : 'denied'}`,
+    text: [
+      `Hi ${username},`,
+      '',
+      approved
+        ? `Great news — your request to upgrade to ${requestedTier} has been approved! Your account has been updated.`
+        : `Your request to upgrade to ${requestedTier} has been denied.`,
+      adminNote ? `\nNote from the admin: ${adminNote}` : '',
+      '',
+      `Log in to the portal: ${PORTAL_PUBLIC_URL}/login`,
+    ].join('\n'),
+    html: `
+      <p>Hi ${username},</p>
+      ${approved
+        ? `<p>Great news — your request to upgrade to <strong>${requestedTier}</strong> has been <strong>approved</strong>! Your account has been updated.</p>`
+        : `<p>Your request to upgrade to <strong>${requestedTier}</strong> has been <strong>denied</strong>.</p>`}
+      ${adminNote ? `<p><em>Note from the admin: ${adminNote}</em></p>` : ''}
+      <p><a href="${PORTAL_PUBLIC_URL}/login">Log in to the portal</a></p>
+    `,
   });
 }
 
@@ -675,7 +869,7 @@ Launch now — all agents in ONE message.`;
       [
         'Sprint Team',
         'Daily sprint review with Jira integration',
-        202,
+        50,
         'https://raw.githubusercontent.com/tndejong/habbo-agent-platform/main/agents/sprint-team.md',
         JSON.stringify({ sprint_planner: 'Tom', issue_tracker: 'Sander' })
       ]
@@ -713,7 +907,8 @@ async function createHabboUser(username) {
 }
 
 const app = express();
-app.use(helmet());
+// Plain HTTP local dev: disable HSTS and CSP (CSP can include upgrade-insecure-requests in defaults).
+app.use(helmet({ hsts: false, contentSecurityPolicy: false }));
 app.use(express.json({ limit: '64kb' }));
 app.use(cookieParser());
 
@@ -779,6 +974,10 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       habbo_username: habboUser.username,
       portal_user_id: insertResult.insertId
     });
+
+    sendWelcomeEmail({ toEmail: email, username }).catch((e) =>
+      console.warn('Welcome email failed:', e.message)
+    );
 
     return res.json({
       ok: true,
@@ -1169,18 +1368,227 @@ app.get('/api/hotel/rooms', authRequired, async (req, res) => {
 
 app.get('/api/hotel/bots', authRequired, async (req, res) => {
   const habboUserId = req.user.habbo_user_id;
-  const [rows] = await db.execute(`
+  // Remove portal rows that no longer have a matching `bots` row for this user (sold/deleted/renamed in hotel)
+  await db.execute(
+    `DELETE a FROM ai_agent_configs a
+     WHERE a.user_id = ?
+     AND NOT EXISTS (
+       SELECT 1 FROM bots b
+       WHERE b.user_id = a.user_id
+       AND (
+         (a.bot_id IS NOT NULL AND a.bot_id != 0 AND b.id = a.bot_id)
+         OR (
+           (a.bot_id IS NULL OR a.bot_id = 0)
+           AND b.id = (
+             SELECT MAX(b2.id) FROM bots b2
+             WHERE b2.user_id = a.user_id AND LOWER(TRIM(b2.name)) = LOWER(TRIM(a.name))
+           )
+         )
+       )
+     )`,
+    [habboUserId]
+  );
+
+  const [rows] = await db.execute(
+    `
     SELECT
       a.id, a.name, a.persona, COALESCE(b.motto, a.motto, '') AS motto, a.figure, a.gender,
-      a.room_id, a.bot_id, a.active, a.created_at,
-      r.name AS room_name
+      a.room_id AS config_room_id, a.bot_id, a.active, a.created_at,
+      r.name AS room_name,
+      b.room_id AS db_room_id,
+      br.name AS db_room_name
     FROM ai_agent_configs a
+    INNER JOIN bots b ON b.user_id = a.user_id AND (
+      (a.bot_id IS NOT NULL AND a.bot_id != 0 AND b.id = a.bot_id)
+      OR (
+        (a.bot_id IS NULL OR a.bot_id = 0)
+        AND b.id = (
+          SELECT MAX(b3.id) FROM bots b3
+          WHERE b3.user_id = a.user_id AND LOWER(TRIM(b3.name)) = LOWER(TRIM(a.name))
+        )
+      )
+    )
     LEFT JOIN rooms r ON r.id = a.room_id
-    LEFT JOIN bots b ON b.id = a.bot_id
+    LEFT JOIN rooms br ON br.id = b.room_id
     WHERE a.user_id = ?
     ORDER BY a.active DESC, a.created_at DESC
-  `, [habboUserId]);
-  res.json({ bots: rows });
+    `,
+    [habboUserId]
+  );
+
+  // Enrich with live MCP state (loaded rooms). Prefer bot_id match — duplicate names exist hotel-wide.
+  const liveByBotId = {};
+  const liveByName = {};
+  try {
+    const MCP_URL = (process.env.HOTEL_MCP_URL || 'http://habbo-mcp:3003/mcp').replace(/\/?$/, '');
+    const MCP_KEY = process.env.MCP_API_KEY || '';
+    const headers = { 'content-type': 'application/json' };
+    if (MCP_KEY) headers['authorization'] = `Bearer ${MCP_KEY}`;
+    const mcpRes = await fetch(MCP_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'bots', method: 'tools/call', params: { name: 'list_bots', arguments: {} } }),
+      signal: AbortSignal.timeout(4000),
+    });
+    const mcpData = await mcpRes.json();
+    const allBots = JSON.parse(mcpData.result?.content?.[0]?.text || '{}').bots || [];
+    for (const b of allBots) {
+      if (b.room_id > 0 && b.id != null) liveByBotId[b.id] = b;
+      if (b.room_id > 0 && b.name) liveByName[b.name.toLowerCase()] = b;
+    }
+  } catch { /* MCP unreachable */ }
+
+  const [roomRows] = await db.execute('SELECT id, caption AS name FROM rooms').catch(() => [[]]);
+  const roomNames = Object.fromEntries((roomRows || []).map(r => [r.id, r.name]));
+
+  // MySQL + MCP list_bots both read `bots` — rows can be stale (room_id set while room is unloaded).
+  // Ask the emulator which bot IDs are actually in memory for each room (RCON roomlivebots).
+  const roomIdsToVerify = new Set();
+  for (const r of rows) {
+    let cand = null;
+    if (r.bot_id && liveByBotId[r.bot_id]) cand = liveByBotId[r.bot_id];
+    else cand = liveByName[r.name?.toLowerCase()] || null;
+    if (cand && cand.room_id > 0) roomIdsToVerify.add(cand.room_id);
+  }
+  const roomLiveSets = new Map();
+  let rconRoomsOk = 0;
+  let rconLastErr = null;
+  await Promise.all(
+    [...roomIdsToVerify].map(async (rid) => {
+      try {
+        const rc = await rconCommand('roomlivebots', { room_id: rid });
+        if (rc.status === 0 && rc.message) {
+          const j = JSON.parse(rc.message);
+          if (j.loaded === true && Array.isArray(j.bot_ids)) {
+            roomLiveSets.set(rid, new Set(j.bot_ids));
+          } else {
+            roomLiveSets.set(rid, new Set());
+          }
+          rconRoomsOk++;
+        } else {
+          rconLastErr = rc.message || `status ${rc.status}`;
+        }
+      } catch (e) {
+        rconLastErr = e?.message || String(e);
+      }
+    })
+  );
+  const rconRoomsRequested = roomIdsToVerify.size;
+  const rconVerified =
+    rconRoomsRequested === 0 || rconRoomsOk === rconRoomsRequested;
+
+  const bots = rows.map((r) => {
+    let cand = null;
+    if (r.bot_id && liveByBotId[r.bot_id]) cand = liveByBotId[r.bot_id];
+    else cand = liveByName[r.name?.toLowerCase()] || null;
+    let live = null;
+    if (cand && cand.room_id > 0) {
+      const set = roomLiveSets.get(cand.room_id);
+      if (set && set.has(cand.id)) live = cand;
+      else if (set === undefined) live = cand; // RCON unavailable — keep MCP/DB behaviour
+    }
+    const ghostStaleDb = !!(cand && cand.room_id > 0 && !live && roomLiveSets.has(cand.room_id));
+    return {
+      ...r,
+      live_room_id: live?.room_id || 0,
+      live_room_name: live ? (roomNames[live.room_id] || null) : null,
+      ghost_stale_db: ghostStaleDb,
+      stale_db_room_id: ghostStaleDb ? cand.room_id : 0,
+    };
+  });
+
+  res.json({
+    bots,
+    meta: {
+      portalVersion: portalPkgVersion,
+      distMainJs: distMainJsFingerprint(),
+      rcon: {
+        host: RCON_HOST,
+        port: RCON_PORT,
+        roomsRequested: rconRoomsRequested,
+        roomsOk: rconRoomsOk,
+        verified: rconVerified,
+        lastError: rconVerified ? null : (rconLastErr || 'RCON did not confirm all rooms'),
+      },
+    },
+  });
+});
+
+app.post('/api/hotel/bots/sync', authRequired, async (req, res) => {
+  const habboUserId = req.user.habbo_user_id;
+  try {
+    // list_bots (MCP) returns every bot in the hotel — never use that for sync.
+    // Only rows in `bots` owned by this Habbo user belong in the portal.
+    const [ownedBots] = await db.execute(
+      `SELECT id, name, motto, figure, gender, room_id, x, y FROM bots WHERE user_id = ? ORDER BY id ASC`,
+      [habboUserId]
+    );
+
+    const ownedBotIds = new Set(ownedBots.map(b => b.id));
+    const ownedNamesLower = new Set(
+      ownedBots.map(b => b.name?.toLowerCase()).filter(Boolean)
+    );
+
+    // Drop portal rows that no longer have a matching owned bot (deleted from inventory / hotel)
+    const [configs] = await db.execute(
+      'SELECT id, bot_id, name FROM ai_agent_configs WHERE user_id = ?',
+      [habboUserId]
+    );
+    let removed = 0;
+    for (const c of configs) {
+      const hasBotId = c.bot_id != null && c.bot_id !== 0;
+      const nameKey = String(c.name || '').toLowerCase();
+      const keep = hasBotId
+        ? ownedBotIds.has(c.bot_id)
+        : ownedNamesLower.has(nameKey);
+      if (!keep) {
+        await db.execute('DELETE FROM ai_agent_configs WHERE id = ? AND user_id = ?', [c.id, habboUserId]);
+        removed++;
+      }
+    }
+
+    const [existing] = await db.execute(
+      'SELECT LOWER(name) AS name FROM ai_agent_configs WHERE user_id = ?',
+      [habboUserId]
+    );
+    const registeredNames = new Set(existing.map(r => r.name));
+
+    // One row per name (same-name duplicates: keep highest id = last in ASC order)
+    const byName = new Map();
+    for (const b of ownedBots) {
+      const key = b.name?.toLowerCase();
+      if (!key) continue;
+      byName.set(key, b);
+    }
+
+    let imported = 0;
+    let alreadyHad = 0;
+    for (const b of byName.values()) {
+      const key = b.name.toLowerCase();
+      if (registeredNames.has(key)) {
+        alreadyHad++;
+        continue;
+      }
+      const gender = b.gender === 'F' ? 'F' : 'M';
+      await db.execute(
+        `INSERT INTO ai_agent_configs (user_id, name, persona, motto, figure, gender, room_id, active, bot_id)
+         VALUES (?, ?, '', ?, ?, ?, 0, 1, ?)`,
+        [habboUserId, b.name, b.motto || '', b.figure || '', gender, b.id]
+      );
+      registeredNames.add(key);
+      imported++;
+    }
+
+    res.json({
+      ok: true,
+      imported,
+      removed,
+      alreadyHad,
+      totalOwned: byName.size,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/hotel/bots/:id', authRequired, async (req, res) => {
@@ -1327,6 +1735,119 @@ app.get('/api/figure', async (req, res) => {
   }
 });
 
+// ── Tier Upgrade Requests ────────────────────────────────────────────────────
+
+app.use('/api/tier-requests', express.json({ limit: '16kb' }));
+
+// Submit a new upgrade request (any authenticated user, basic tier only)
+app.post('/api/tier-requests', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+
+    const requestedTier = String(req.body?.requested_tier || 'pro');
+    if (!['pro', 'enterprise'].includes(requestedTier)) {
+      return res.status(400).json({ error: 'requested_tier must be "pro" or "enterprise"' });
+    }
+    const motivation = String(req.body?.motivation || '').trim().slice(0, 1000);
+
+    // One pending request at a time
+    const [[existing]] = await db.execute(
+      `SELECT id FROM tier_upgrade_requests WHERE portal_user_id = ? AND status = 'pending' LIMIT 1`,
+      [portalUser.id]
+    );
+    if (existing) return res.status(409).json({ error: 'You already have a pending upgrade request.' });
+
+    const [result] = await db.execute(
+      `INSERT INTO tier_upgrade_requests (portal_user_id, requested_tier, motivation) VALUES (?,?,?)`,
+      [portalUser.id, requestedTier, motivation]
+    );
+
+    sendUpgradeRequestNotification({
+      request: { id: result.insertId, requested_tier: requestedTier, motivation },
+      user: { username: portalUser.username, email: portalUser.email },
+    }).catch((e) => console.warn('Upgrade request notification email failed:', e.message));
+
+    res.json({ ok: true, id: result.insertId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Get own pending request (for "you have a pending request" badge)
+app.get('/api/tier-requests/mine', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [[row]] = await db.execute(
+      `SELECT id, requested_tier, motivation, status, admin_note, created_at
+       FROM tier_upgrade_requests WHERE portal_user_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [portalUser.id]
+    );
+    res.json({ ok: true, request: row || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// List all requests (developer/admin only)
+app.get('/api/tier-requests', authRequired, devRequired, async (req, res) => {
+  try {
+    const status = req.query.status || 'pending';
+    const [rows] = await db.execute(
+      `SELECT r.id, r.requested_tier, r.motivation, r.status, r.admin_note, r.created_at,
+              u.username, u.email, u.ai_tier AS current_tier
+       FROM tier_upgrade_requests r
+       JOIN portal_users u ON u.id = r.portal_user_id
+       WHERE r.status = ?
+       ORDER BY r.created_at ASC`,
+      [status]
+    );
+    res.json({ ok: true, requests: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Approve or deny a request (developer/admin only)
+app.post('/api/tier-requests/:id/review', authRequired, devRequired, async (req, res) => {
+  try {
+    const reviewerUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    const decision = String(req.body?.decision || '');
+    const adminNote = String(req.body?.admin_note || '').trim().slice(0, 500);
+    if (!['approved', 'denied'].includes(decision)) {
+      return res.status(400).json({ error: 'decision must be "approved" or "denied"' });
+    }
+
+    const [[request]] = await db.execute(
+      `SELECT r.*, u.username, u.email FROM tier_upgrade_requests r
+       JOIN portal_users u ON u.id = r.portal_user_id
+       WHERE r.id = ?`,
+      [req.params.id]
+    );
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.status !== 'pending') {
+      return res.status(409).json({ error: `Request is already ${request.status}` });
+    }
+
+    await db.execute(
+      `UPDATE tier_upgrade_requests SET status = ?, admin_note = ?, reviewed_by_user_id = ? WHERE id = ?`,
+      [decision, adminNote, reviewerUser?.id || null, request.id]
+    );
+
+    if (decision === 'approved') {
+      await db.execute(
+        `UPDATE portal_users SET ai_tier = ? WHERE id = ?`,
+        [request.requested_tier, request.portal_user_id]
+      );
+    }
+
+    sendUpgradeDecisionEmail({
+      toEmail: request.email,
+      username: request.username,
+      status: decision,
+      requestedTier: request.requested_tier,
+      adminNote,
+    }).catch((e) => console.warn('Upgrade decision email failed:', e.message));
+
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Agent Personas ──────────────────────────────────────────────────────────
 
 app.use('/api/agents', express.json({ limit: '1mb' }));
@@ -1407,10 +1928,12 @@ app.get('/api/agents/teams/:id', authRequired, async (req, res) => {
     const [[team]] = await db.execute('SELECT * FROM agent_teams WHERE id=?', [req.params.id]);
     if (!team) return res.status(404).json({ error: 'Not found' });
     const [members] = await db.execute(
-      `SELECT atm.id, atm.role, p.id AS persona_id, p.name, p.description, p.figure_type, p.bot_name
+      `SELECT atm.id, atm.role, p.id AS persona_id, p.name, p.description, p.figure_type, p.figure,
+              p.role AS persona_role, p.capabilities, p.prompt
        FROM agent_team_members atm
        JOIN agent_personas p ON p.id = atm.persona_id
-       WHERE atm.team_id = ?`, [req.params.id]
+       WHERE atm.team_id = ?
+       ORDER BY atm.id ASC`, [req.params.id]
     );
     const [flows] = await db.execute(
       `SELECT f.* FROM agent_flows f
@@ -1454,7 +1977,7 @@ app.post('/api/agents/packs', authRequired, devRequired, async (req, res) => {
     if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
     const [result] = await db.execute(
       'INSERT INTO agent_packs (name, description, room_id, pack_source_url, role_assignments, created_by_user_id) VALUES (?,?,?,?,?,?)',
-      [name.trim(), description || '', Number(room_id) || 202, pack_source_url || '', JSON.stringify(role_assignments || {}), req.user.habbo_user_id]
+      [name.trim(), description || '', Number(room_id) || 50, pack_source_url || '', JSON.stringify(role_assignments || {}), req.user.habbo_user_id]
     );
     res.json({ ok: true, id: result.insertId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1473,7 +1996,7 @@ app.put('/api/agents/packs/:id', authRequired, devRequired, async (req, res) => 
     const { name, description, room_id, pack_source_url, role_assignments } = req.body;
     await db.execute(
       'UPDATE agent_packs SET name=?, description=?, room_id=?, pack_source_url=?, role_assignments=? WHERE id=?',
-      [name, description || '', Number(room_id) || 202, pack_source_url || '', JSON.stringify(role_assignments || {}), req.params.id]
+      [name, description || '', Number(room_id) || 50, pack_source_url || '', JSON.stringify(role_assignments || {}), req.params.id]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1588,15 +2111,15 @@ app.delete('/api/agents/teams/:id/templates/:templateId', authRequired, devRequi
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Trigger a team
-app.post('/api/agents/teams/:id/trigger', authRequired, async (req, res) => {
+// Trigger a marketplace team (developer-only — normal users use /api/my/teams/:id/trigger)
+app.post('/api/agents/teams/:id/trigger', authRequired, devRequired, async (req, res) => {
   try {
     const { flow_id, room_id } = req.body;
     const [[team]] = await db.execute('SELECT id, name, pack_source_url, role_assignments FROM agent_teams WHERE id=?', [req.params.id]);
     if (!team) return res.status(404).json({ error: 'Team not found' });
 
     // Validate room exists in hotel
-    const resolvedRoomId = Number(room_id) || 202;
+    const resolvedRoomId = Number(room_id) || 50;
     const [[room]] = await db.execute('SELECT id, name FROM rooms WHERE id = ? LIMIT 1', [resolvedRoomId]);
     if (!room) return res.status(400).json({ error: `Room ${resolvedRoomId} does not exist in the hotel. Create it first or use a valid room ID.` });
 
@@ -1648,7 +2171,7 @@ app.post('/api/agents/teams/:id/trigger', authRequired, async (req, res) => {
       body: JSON.stringify({
         team_id: Number(req.params.id),
         flow_id: flow_id ? Number(flow_id) : null,
-        room_id: Number(room_id) || 202,
+        room_id: Number(room_id) || 50,
         triggered_by: req.user.username,
         portal_url: process.env.PORTAL_PUBLIC_URL || `http://agent-portal:3000`,
         portal_user_id: portalUser?.id,
@@ -1728,10 +2251,373 @@ app.delete('/api/agents/flows/:id', authRequired, devRequired, async (req, res) 
 // List all deployed bots (for persona bot picker)
 app.get('/api/agents/bots', authRequired, async (req, res) => {
   try {
+    if (req.query.mine === 'true') {
+      const [rows] = await db.execute(
+        'SELECT id, name, room_id, x, y, figure FROM bots WHERE user_id = ? ORDER BY name ASC',
+        [req.user.habbo_user_id]
+      );
+      return res.json({ ok: true, bots: rows });
+    }
     const [rows] = await db.execute(
       'SELECT id, name, room_id, x, y, figure FROM bots ORDER BY name ASC'
     );
     res.json({ ok: true, bots: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── User-scoped endpoints (/api/my/*) ─────────────────────────────────────────
+
+// My Personas CRUD
+app.get('/api/my/personas', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [rows] = await db.execute(
+      'SELECT * FROM user_personas WHERE portal_user_id = ? ORDER BY name ASC',
+      [portalUser.id]
+    );
+    res.json({ ok: true, personas: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/my/personas', authRequired, tierGate('pro'), async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const { name, description, prompt, role, capabilities, figure_type, figure, bot_name } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
+    const [result] = await db.execute(
+      `INSERT INTO user_personas (portal_user_id, name, description, prompt, role, capabilities, figure_type, figure, bot_name)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [portalUser.id, name.trim(), description || '', prompt || '', role || '', capabilities || '', figure_type || 'agent-m', figure || '', bot_name || '']
+    );
+    res.json({ ok: true, id: result.insertId });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'You already have a persona with that name' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/my/personas/:id', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [[existing]] = await db.execute('SELECT id FROM user_personas WHERE id = ? AND portal_user_id = ?', [req.params.id, portalUser.id]);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const { name, description, prompt, role, capabilities, figure_type, figure, bot_name } = req.body;
+    await db.execute(
+      `UPDATE user_personas SET name=?, description=?, prompt=?, role=?, capabilities=?, figure_type=?, figure=?, bot_name=? WHERE id=? AND portal_user_id=?`,
+      [name, description || '', prompt || '', role || '', capabilities || '', figure_type || 'agent-m', figure || '', bot_name || '', req.params.id, portalUser.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'You already have a persona with that name' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/my/personas/:id', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    await db.execute('DELETE FROM user_personas WHERE id = ? AND portal_user_id = ?', [req.params.id, portalUser.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// My Teams CRUD
+app.get('/api/my/teams', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [teams] = await db.execute(
+      'SELECT * FROM user_teams WHERE portal_user_id = ? ORDER BY name ASC',
+      [portalUser.id]
+    );
+    for (const team of teams) {
+      const [members] = await db.execute(
+        `SELECT utm.id, utm.role, up.id AS persona_id, up.name, up.description, up.figure_type, up.figure, up.bot_name
+         FROM user_team_members utm
+         JOIN user_personas up ON up.id = utm.user_persona_id
+         WHERE utm.user_team_id = ?`, [team.id]
+      );
+      team.members = members;
+    }
+    res.json({ ok: true, teams });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Single user team (same shape as GET /api/agents/teams/:id for the dashboard)
+app.get('/api/my/teams/:id', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [[team]] = await db.execute(
+      'SELECT * FROM user_teams WHERE id = ? AND portal_user_id = ?',
+      [req.params.id, portalUser.id]
+    );
+    if (!team) return res.status(404).json({ error: 'Not found' });
+    const [members] = await db.execute(
+      `SELECT utm.id, utm.role, up.id AS persona_id, up.name, up.description, up.figure_type, up.figure, up.bot_name
+       FROM user_team_members utm
+       JOIN user_personas up ON up.id = utm.user_persona_id
+       WHERE utm.user_team_id = ?
+       ORDER BY utm.id ASC`,
+      [team.id]
+    );
+    res.json({ ok: true, team: { ...team, members, flows: [] } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/my/teams', authRequired, tierGate('pro'), async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const { name, description, orchestrator_prompt, execution_mode, tasks_json, language, default_room_id } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
+    const [result] = await db.execute(
+      `INSERT INTO user_teams (portal_user_id, name, description, orchestrator_prompt, execution_mode, tasks_json, language, default_room_id)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [portalUser.id, name.trim(), description || '', orchestrator_prompt || '', execution_mode || 'concurrent', JSON.stringify(tasks_json || []), language || 'en', Number(default_room_id) || 50]
+    );
+    res.json({ ok: true, id: result.insertId });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'You already have a team with that name' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/my/teams/:id', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [[existing]] = await db.execute('SELECT id FROM user_teams WHERE id = ? AND portal_user_id = ?', [req.params.id, portalUser.id]);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const { name, description, orchestrator_prompt, execution_mode, tasks_json, language, default_room_id } = req.body;
+    await db.execute(
+      `UPDATE user_teams SET name=?, description=?, orchestrator_prompt=?, execution_mode=?, tasks_json=?, language=?, default_room_id=? WHERE id=? AND portal_user_id=?`,
+      [name, description || '', orchestrator_prompt || '', execution_mode || 'concurrent', JSON.stringify(tasks_json || []), language || 'en', Number(default_room_id) || 50, req.params.id, portalUser.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'You already have a team with that name' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/my/teams/:id', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    await db.execute('DELETE FROM user_teams WHERE id = ? AND portal_user_id = ?', [req.params.id, portalUser.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/my/teams/:id/members', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [[team]] = await db.execute('SELECT id FROM user_teams WHERE id = ? AND portal_user_id = ?', [req.params.id, portalUser.id]);
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+    const { persona_id, role } = req.body;
+    // Verify persona belongs to this user
+    const [[persona]] = await db.execute('SELECT id FROM user_personas WHERE id = ? AND portal_user_id = ?', [persona_id, portalUser.id]);
+    if (!persona) return res.status(400).json({ error: 'Persona not found or not yours' });
+    await db.execute(
+      'INSERT IGNORE INTO user_team_members (user_team_id, user_persona_id, role) VALUES (?,?,?)',
+      [req.params.id, persona_id, role || '']
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/my/teams/:id/members/:memberId', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [[team]] = await db.execute('SELECT id FROM user_teams WHERE id = ? AND portal_user_id = ?', [req.params.id, portalUser.id]);
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+    await db.execute('DELETE FROM user_team_members WHERE id = ? AND user_team_id = ?', [req.params.memberId, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Trigger my team
+app.post('/api/my/teams/:id/trigger', authRequired, tierGate('pro'), async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [[team]] = await db.execute('SELECT * FROM user_teams WHERE id = ? AND portal_user_id = ?', [req.params.id, portalUser.id]);
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+
+    const { room_id } = req.body;
+    const resolvedRoomId = Number(room_id) || team.default_room_id || 50;
+
+    // Validate room exists
+    const [[room]] = await db.execute('SELECT id, name FROM rooms WHERE id = ? LIMIT 1', [resolvedRoomId]);
+    if (!room) return res.status(400).json({ error: `Room ${resolvedRoomId} does not exist in the hotel.` });
+
+    // Get members with their personas
+    const [members] = await db.execute(
+      `SELECT up.name, up.role AS persona_role, up.capabilities, up.prompt, up.figure_type, up.bot_name, utm.role AS team_role
+       FROM user_team_members utm JOIN user_personas up ON up.id = utm.user_persona_id
+       WHERE utm.user_team_id = ?`, [team.id]
+    );
+
+    if (members.length === 0) return res.status(400).json({ error: 'Team has no members. Add at least one persona.' });
+
+    const unlinked = members.filter(m => !m.bot_name?.trim());
+    if (unlinked.length > 0) {
+      return res.status(400).json({
+        error: `Cannot launch: ${unlinked.map(m => `"${m.name}"`).join(', ')} ${unlinked.length === 1 ? 'has' : 'have'} no bot linked.`
+      });
+    }
+
+    // Check bot conflicts
+    const botNames = members.map(m => m.bot_name).filter(Boolean);
+    if (botNames.length > 0) {
+      const placeholders = botNames.map(() => '?').join(',');
+      const [activeBots] = await db.execute(
+        `SELECT name, room_id FROM bots WHERE name IN (${placeholders}) AND room_id > 0`,
+        botNames
+      );
+      const wrongRoom = activeBots.filter(b => b.room_id !== resolvedRoomId);
+      if (wrongRoom.length > 0) {
+        return res.status(400).json({
+          error: `Bot ${wrongRoom.map(b => `"${b.name}"`).join(', ')} already active in room ${wrongRoom[0].room_id}.`
+        });
+      }
+    }
+
+    // Forward to agent-trigger — build a compatible config
+    const r = await fetch(`${AGENT_TRIGGER_URL}/trigger`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Secret': PORTAL_INTERNAL_SECRET,
+      },
+      body: JSON.stringify({
+        team_id: team.id,
+        user_team: true,
+        room_id: resolvedRoomId,
+        triggered_by: req.user.username,
+        portal_url: process.env.PORTAL_PUBLIC_URL || `http://agent-portal:3000`,
+        portal_user_id: portalUser.id,
+      })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: data.error || 'Trigger failed' });
+    res.json({ ok: true, ...data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Marketplace install ───────────────────────────────────────────────────────
+
+app.post('/api/marketplace/teams/:id/install', authRequired, tierGate('pro'), async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const marketplaceTeamId = Number(req.params.id);
+
+    // Check not already installed
+    const [[alreadyInstalled]] = await db.execute(
+      'SELECT id FROM user_teams WHERE portal_user_id = ? AND source_team_id = ?',
+      [portalUser.id, marketplaceTeamId]
+    );
+    if (alreadyInstalled) return res.status(409).json({ error: 'Team already installed', user_team_id: alreadyInstalled.id });
+
+    // Fetch marketplace team + members
+    const [[mTeam]] = await db.execute('SELECT * FROM agent_teams WHERE id = ?', [marketplaceTeamId]);
+    if (!mTeam) return res.status(404).json({ error: 'Marketplace team not found' });
+    const [mMembers] = await db.execute(
+      `SELECT p.*, atm.role AS team_role
+       FROM agent_team_members atm JOIN agent_personas p ON p.id = atm.persona_id
+       WHERE atm.team_id = ?`, [marketplaceTeamId]
+    );
+
+    // Fork personas
+    const personaIdMap = {}; // marketplace persona id → new user persona id
+    for (const mp of mMembers) {
+      // Check if user already has a persona with same name (from a previous install)
+      let suffix = '';
+      let attempts = 0;
+      while (attempts < 5) {
+        const candidateName = `${mp.name}${suffix}`;
+        const [[dup]] = await db.execute(
+          'SELECT id FROM user_personas WHERE portal_user_id = ? AND name = ?',
+          [portalUser.id, candidateName]
+        );
+        if (!dup) {
+          const [result] = await db.execute(
+            `INSERT INTO user_personas (portal_user_id, source_persona_id, name, description, prompt, role, capabilities, figure_type, figure, bot_name)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            [portalUser.id, mp.id, candidateName, mp.description || '', mp.prompt || '', mp.role || '', mp.capabilities || '', mp.figure_type || 'agent-m', mp.figure || '', '']
+          );
+          personaIdMap[mp.id] = result.insertId;
+          break;
+        }
+        attempts++;
+        suffix = ` (${attempts + 1})`;
+      }
+    }
+
+    // Fork team
+    const [teamResult] = await db.execute(
+      `INSERT INTO user_teams (portal_user_id, source_team_id, name, description, orchestrator_prompt, execution_mode, tasks_json, language, default_room_id)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [portalUser.id, marketplaceTeamId, mTeam.name, mTeam.description || '', mTeam.orchestrator_prompt || '', mTeam.execution_mode || 'concurrent', mTeam.tasks_json || '[]', mTeam.language || 'en', 50]
+    );
+    const userTeamId = teamResult.insertId;
+
+    // Link forked personas to forked team
+    for (const mp of mMembers) {
+      const userPersonaId = personaIdMap[mp.id];
+      if (userPersonaId) {
+        await db.execute(
+          'INSERT INTO user_team_members (user_team_id, user_persona_id, role) VALUES (?,?,?)',
+          [userTeamId, userPersonaId, mp.team_role || '']
+        );
+      }
+    }
+
+    res.json({ ok: true, user_team_id: userTeamId });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Team already installed or name conflict' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── User team config for agent-trigger ────────────────────────────────────────
+
+app.get('/api/internal/user-teams/:id/config', async (req, res) => {
+  try {
+    const secret = req.headers['x-internal-secret'];
+    if (PORTAL_INTERNAL_SECRET && secret !== PORTAL_INTERNAL_SECRET) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const userTeamId = Number(req.params.id);
+    const [[team]] = await db.execute('SELECT * FROM user_teams WHERE id=?', [userTeamId]);
+    if (!team) return res.status(404).json({ error: 'User team not found' });
+    const [members] = await db.execute(
+      `SELECT up.name, up.role AS persona_role, up.capabilities, up.prompt, up.figure_type, up.bot_name, utm.role AS team_role
+       FROM user_team_members utm JOIN user_personas up ON up.id = utm.user_persona_id
+       WHERE utm.user_team_id = ?`, [userTeamId]
+    );
+    res.json({ ok: true, team, members, flow: null, templates: [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// List user's installed team source IDs (for marketplace "installed" badges)
+app.get('/api/my/installed-team-ids', authRequired, async (req, res) => {
+  try {
+    const portalUser = await getPortalUserByHabboUserId(req.user.habbo_user_id);
+    if (!portalUser) return res.status(404).json({ error: 'Portal user not found' });
+    const [rows] = await db.execute(
+      'SELECT source_team_id FROM user_teams WHERE portal_user_id = ? AND source_team_id IS NOT NULL',
+      [portalUser.id]
+    );
+    res.json({ ok: true, installed: rows.map(r => r.source_team_id) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1742,16 +2628,26 @@ app.get('/api/agents/status', authRequired, async (req, res) => {
     const MCP_URL = (process.env.HOTEL_MCP_URL || 'http://habbo-mcp:3003/mcp').replace(/\/?$/, '');
     const MCP_KEY = process.env.MCP_API_KEY || '';
 
-    const [triggerRes, mcpRes, personasRes, roomsRes] = await Promise.allSettled([
+    const [triggerRes, mcpRes, globalPersonasRes, userPersonasRes, roomsRes] = await Promise.allSettled([
       fetch(`${AGENT_TRIGGER_URL}/health`).then(r => r.json()),
       fetch(`${AGENT_TRIGGER_URL}/mcp-status`).then(r => r.json()),
-      // Fetch all persona→bot_name mappings for enrichment
+      // Global marketplace personas (developer-created templates, bot_name now cleared)
       db.execute(`
         SELECT p.name AS persona_name, p.bot_name, p.figure AS persona_figure,
                at2.name AS team_name
         FROM agent_personas p
         LEFT JOIN agent_team_members atm ON atm.persona_id = p.id
         LEFT JOIN agent_teams at2 ON at2.id = atm.team_id
+        WHERE p.bot_name != ''
+      `),
+      // User-scoped personas — these are the bots actually deployed by users
+      db.execute(`
+        SELECT up.name AS persona_name, up.bot_name, up.figure AS persona_figure,
+               ut.name AS team_name
+        FROM user_personas up
+        LEFT JOIN user_team_members utm ON utm.user_persona_id = up.id
+        LEFT JOIN user_teams ut ON ut.id = utm.user_team_id
+        WHERE up.bot_name != ''
       `),
       db.execute('SELECT id, caption AS name FROM rooms'),
     ]);
@@ -1777,10 +2673,16 @@ app.get('/api/agents/status', authRequired, async (req, res) => {
       const parsed = JSON.parse(mcpData.result?.content?.[0]?.text || '{}');
       const allBots = parsed.bots || [];
 
-      // Only bots in a loaded room (room_id > 0)
-      const personas = personasRes.status === 'fulfilled' ? personasRes.value[0] : [];
+      // Build a unified persona map: user personas take precedence over global ones
       const personaMap = {};
-      for (const p of personas) personaMap[p.bot_name?.toLowerCase()] = p;
+      const globalPersonas = globalPersonasRes.status === 'fulfilled' ? globalPersonasRes.value[0] : [];
+      const userPersonas = userPersonasRes.status === 'fulfilled' ? userPersonasRes.value[0] : [];
+      for (const p of globalPersonas) {
+        if (p.bot_name) personaMap[p.bot_name.toLowerCase()] = p;
+      }
+      for (const p of userPersonas) {
+        if (p.bot_name) personaMap[p.bot_name.toLowerCase()] = p; // user entries win
+      }
 
       const enriched = allBots
         .filter(b => b.room_id > 0)
@@ -1869,6 +2771,10 @@ app.get('/app', (req, res) => {
 app.use(express.static(path.join(__dirname, 'dist'), {
   setHeaders(res, filePath) {
     if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-store');
+    // Hashed assets must not stick in browser when we redeploy (otherwise "nothing changes")
+    if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.map')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
   },
 }));
 app.get('*', (_req, res) => {
@@ -1893,6 +2799,9 @@ ensurePortalSchema()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`agent-hotel-portal listening on :${PORT}`);
+      try {
+        console.log(`portal dist JS (from dist/index.html): ${distMainJsFingerprint()}`);
+      } catch { /* ignore */ }
     });
   })
   .catch((err) => {

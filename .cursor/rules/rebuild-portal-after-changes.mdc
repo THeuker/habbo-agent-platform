@@ -1,0 +1,21 @@
+---
+description: After portal changes, run production build before finishing
+globs: portal/**/*
+alwaysApply: false
+---
+
+# Rebuild portal after changes
+
+When you finish edits that affect the agent portal (anything under `portal/`, including `server.js`, `src/`, `vite.config.js`, `package.json`, or static assets used by the build):
+
+1. Run a production build from the repo root:
+
+   ```bash
+   cd portal && npm run build
+   ```
+
+2. If the build fails, fix the errors and run `npm run build` again until it succeeds.
+
+3. Do **not** mark the task complete or tell the user you are done until the build has passed.
+
+Docker-based workflows still need an up-to-date `portal/dist/` for the image or bind mount that serves static files.

@@ -5,7 +5,8 @@
       "name": "agent-portal",
       "runtimeExecutable": "/opt/homebrew/bin/node",
       "runtimeArgs": [".claude/proxy.mjs"],
-      "port": 3091
+      "port": 3091,
+      "envFile": "${workspaceFolder}/.env"
     },
     {
       "name": "agent-trigger",

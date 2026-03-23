@@ -12,7 +12,8 @@ services:
       context: emulator
     entrypoint: ["/bin/sh","/app/scripts/build.sh"]
     environment:
-      - RCON_ALLOWED=${HABBO_RCON_ALLOWED:-127.0.0.1;172.16.0.0/12}
+      # Allow Docker bridge networks (portal/habbo-mcp) to call RCON — tighten in production
+      - RCON_ALLOWED=${HABBO_RCON_ALLOWED:-127.0.0.1;172.16.0.0/12;10.0.0.0/8}
     volumes:
       - ./emulator/:/app/
       - volume-arcturus-target:/app/arcturus/target
@@ -91,6 +92,11 @@ services:
       - PORTAL_SMTP_PORT=${HABBO_PORTAL_SMTP_PORT:-1025}
       - PORTAL_SMTP_SECURE=${HABBO_PORTAL_SMTP_SECURE:-false}
       - PORTAL_SMTP_FROM=${HABBO_PORTAL_SMTP_FROM:-Agent Hotel <no-reply@hotel.local>}
+      - PORTAL_SMTP_USER=${HABBO_PORTAL_SMTP_USER:-}
+      - PORTAL_SMTP_PASS=${HABBO_PORTAL_SMTP_PASS:-}
+      - PORTAL_ADMIN_EMAIL=${HABBO_PORTAL_ADMIN_EMAIL:-}
+      - PORTAL_MCP_DEFAULT_TENANT=${HABBO_PORTAL_MCP_DEFAULT_TENANT:-default}
+      - PORTAL_MCP_TOKEN_TTL_DAYS=${HABBO_PORTAL_MCP_TOKEN_TTL_DAYS:-365}
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_NAME=arcturus
@@ -104,11 +110,15 @@ services:
       - PORTAL_INTERNAL_SECRET=${HOTEL_PORTAL_INTERNAL_SECRET:-change-this-secret}
       - MCP_API_KEY=${HOTEL_MCP_API_KEY:-}
       - HABBO_MCP_URL=${HOTEL_MCP_URL:-http://habbo-mcp:3003/mcp}
+    volumes:
+      - ./portal/dist:/app/dist
+      - ./portal/server.js:/app/server.js
     ports:
       - ${HABBO_PORTAL_PORT:-3090}:3000
     depends_on:
       - mysql
       - mailpit
+      - arcturus
     networks:
       nitro:
 

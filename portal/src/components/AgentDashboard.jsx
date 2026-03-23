@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { HabboFigure } from './HabboFigure'
+import { friendlyFetchError } from '../utils/fetchError'
 import {
-  Bot, Package, Play, Edit2, Trash2, Plus, X, Check,
+  Bot, Edit2, Trash2, Plus, X, Check,
   Loader2, AlertCircle, AlertTriangle, Users, Zap, ChevronDown, ChevronUp, Square,
   Shield, Wifi, WifiOff, Key, ServerCog, Terminal, RefreshCw, User, Eye, EyeOff,
 } from 'lucide-react'
@@ -243,7 +244,7 @@ export function AccountView({ me, onKeyUpdated }) {
 // ── Main Dashboard Component ───────────────────────────────────────────────
 
 export function AgentDashboard({ me, onActiveTeamChange, onStopTeam }) {
-  const [tab, setTab] = useState('packs')
+  const [tab, setTab] = useState('integrated')
   const [activeTeam, setActiveTeam] = useState(null)
   const [stopping, setStopping] = useState(false)
 
@@ -313,8 +314,7 @@ export function AgentDashboard({ me, onActiveTeamChange, onStopTeam }) {
   const agentBotsInRooms = liveBots.filter(b => b.is_agent)
 
   const tabs = [
-    { id: 'packs', label: 'Packs', icon: Package },
-    { id: 'integrated', label: 'Integrated', icon: Users },
+    { id: 'integrated', label: 'My Teams', icon: Users },
     { id: 'online', label: 'Online', icon: Wifi, badge: agentBotsInRooms.length > 0 ? agentBotsInRooms.length : null },
     ...(me?.is_developer ? [{ id: 'developer', label: 'Developer', icon: Shield }] : []),
   ]
@@ -372,9 +372,8 @@ export function AgentDashboard({ me, onActiveTeamChange, onStopTeam }) {
 
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {tab === 'packs' && <PacksView />}
-        {tab === 'integrated' && <IntegratedView onAfterTrigger={fetchLogs} liveBots={liveBots} />}
-        {tab === 'online' && <OnlineView liveBots={liveBots} />}
+        {tab === 'integrated' && <IntegratedView me={me} onAfterTrigger={fetchLogs} liveBots={liveBots} />}
+        {tab === 'online' && <OnlineView me={me} liveBots={liveBots} />}
         {tab === 'developer' && me?.is_developer && <DeveloperView mcpStatus={mcpStatus} logLines={logLines} logPaused={logPaused} setLogPaused={setLogPaused} />}
         {/* Live log panel — shown on all tabs when a team is running */}
         {activeTeam && tab !== 'developer' && (
@@ -549,11 +548,11 @@ function DeveloperView({ mcpStatus, logLines, logPaused, setLogPaused }) {
 
 // ── Online View ───────────────────────────────────────────────────────────
 
-function OnlineView({ liveBots }) {
+function OnlineView({ me, liveBots }) {
   const [personas, setPersonas] = useState([])
 
   useEffect(() => {
-    api('/api/agents/personas').then(d => setPersonas(d.personas || [])).catch(() => {})
+    api('/api/my/personas').then(d => setPersonas(d.personas || [])).catch(() => {})
   }, [])
 
   const onlineAgentNames = new Set(liveBots.filter(b => b.is_agent).map(b => b.name?.toLowerCase()))
@@ -641,417 +640,9 @@ function OnlineView({ liveBots }) {
   )
 }
 
-// ── Packs View ────────────────────────────────────────────────────────────
-
-function PacksView() {
-  const [packs, setPacks] = useState([])
-  const [bots, setBots] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [showForm, setShowForm] = useState(false)
-  const [editingPack, setEditingPack] = useState(null) // null | pack object
-  const [runningIds, setRunningIds] = useState(new Set())
-  const [toast, setToast] = useState(null) // { msg, type }
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const [pd, bd] = await Promise.all([
-        api('/api/agents/packs'),
-        api('/api/agents/bots'),
-      ])
-      setPacks(pd.packs || [])
-      setBots(bd.bots || [])
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  function showToast(msg, type = 'success') {
-    setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
-  }
-
-  async function runPack(pack) {
-    setRunningIds(prev => new Set([...prev, pack.id]))
-    try {
-      await api(`/api/agents/packs/${pack.id}/trigger`, { method: 'POST' })
-      showToast(`Pack "${pack.name}" triggered successfully.`)
-    } catch (e) {
-      showToast(`Failed to run pack: ${e.message}`, 'error')
-    } finally {
-      setRunningIds(prev => {
-        const next = new Set(prev)
-        next.delete(pack.id)
-        return next
-      })
-    }
-  }
-
-  async function deletePack(pack) {
-    if (!confirm(`Delete pack "${pack.name}"?`)) return
-    // Optimistic remove
-    setPacks(prev => prev.filter(p => p.id !== pack.id))
-    try {
-      await api(`/api/agents/packs/${pack.id}`, { method: 'DELETE' })
-    } catch (e) {
-      showToast(`Delete failed: ${e.message}`, 'error')
-      load()
-    }
-  }
-
-  function openNewForm() {
-    setEditingPack(null)
-    setShowForm(true)
-  }
-
-  function openEditForm(pack) {
-    setEditingPack(pack)
-    setShowForm(true)
-  }
-
-  function closeForm() {
-    setShowForm(false)
-    setEditingPack(null)
-  }
-
-  async function savePack(data) {
-    if (editingPack) {
-      await api(`/api/agents/packs/${editingPack.id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      })
-    } else {
-      await api('/api/agents/packs', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
-    }
-    closeForm()
-    load()
-  }
-
-  if (loading) return <LoadingState />
-  if (error) return <ErrorBanner message={error} onRetry={load} />
-
-  return (
-    <div className="space-y-6">
-      {/* Toast */}
-      {toast && (
-        <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${
-          toast.type === 'error'
-            ? 'bg-destructive/10 border border-destructive/30 text-destructive'
-            : 'bg-green-500/10 border border-green-500/30 text-green-400'
-        }`}>
-          {toast.type === 'error' ? <AlertCircle className="w-4 h-4 flex-shrink-0" /> : <Check className="w-4 h-4 flex-shrink-0" />}
-          {toast.msg}
-        </div>
-      )}
-
-      {/* Toolbar */}
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-foreground">Packs</h2>
-        {!showForm && (
-          <button
-            onClick={openNewForm}
-            className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md hover:bg-primary/90 transition-colors"
-          >
-            <Plus className="w-3 h-3" /> Add Pack
-          </button>
-        )}
-      </div>
-
-      {/* Inline form */}
-      {showForm && (
-        <PackForm
-          pack={editingPack}
-          bots={bots}
-          onSave={savePack}
-          onCancel={closeForm}
-        />
-      )}
-
-      {/* Cards grid */}
-      {packs.length === 0 && !showForm ? (
-        <EmptyState icon={Package} title="No packs yet" description="Create your first pack to get started" />
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {packs.map(pack => (
-            <PackCard
-              key={pack.id}
-              pack={pack}
-              running={runningIds.has(pack.id)}
-              onRun={() => runPack(pack)}
-              onEdit={() => openEditForm(pack)}
-              onDelete={() => deletePack(pack)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Pack Card ─────────────────────────────────────────────────────────────
-
-function PackCard({ pack, running, onRun, onEdit, onDelete }) {
-  const sourceDisplay = pack.pack_source_url
-    ? pack.pack_source_url.length > 40
-      ? pack.pack_source_url.slice(0, 37) + '...'
-      : pack.pack_source_url
-    : null
-
-  const assignments = Array.isArray(pack.role_assignments) ? pack.role_assignments : []
-
-  return (
-    <div className="relative flex flex-col gap-3 p-4 rounded-xl border border-border bg-card">
-      {/* Edit / Delete buttons top-right */}
-      <div className="absolute top-3 right-3 flex gap-1">
-        <button
-          onClick={onEdit}
-          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-          title="Edit pack"
-        >
-          <Edit2 className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={onDelete}
-          className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-          title="Delete pack"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      {/* Top */}
-      <div className="flex items-start gap-3 pr-16">
-        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-          <Package className="w-4 h-4 text-primary" />
-        </div>
-        <div className="min-w-0">
-          <p className="font-semibold text-sm text-foreground">{pack.name}</p>
-          {pack.description && (
-            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{pack.description}</p>
-          )}
-        </div>
-      </div>
-
-      {/* Source */}
-      {sourceDisplay && (
-        <div className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground/60 mr-1">Source</span>
-          <span className="font-mono">{sourceDisplay}</span>
-        </div>
-      )}
-
-      {/* Role assignments */}
-      {assignments.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {assignments.map((a, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center gap-1 text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full"
-            >
-              <span className="text-muted-foreground">{a.role}</span>
-              <span className="text-muted-foreground">→</span>
-              <span className="font-medium">{a.bot_name}</span>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Room badge */}
-      {pack.room_id && (
-        <div>
-          <span className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">
-            Room {pack.room_id}
-          </span>
-        </div>
-      )}
-
-      {/* Run button */}
-      <button
-        onClick={onRun}
-        disabled={running}
-        className="mt-auto flex items-center justify-center gap-1.5 text-xs bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-      >
-        {running ? (
-          <>
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Running...
-          </>
-        ) : (
-          <>
-            <Play className="w-3.5 h-3.5" /> Run
-          </>
-        )}
-      </button>
-    </div>
-  )
-}
-
-// ── Pack Form ─────────────────────────────────────────────────────────────
-
-function PackForm({ pack, bots, onSave, onCancel }) {
-  const [name, setName] = useState(pack?.name || '')
-  const [description, setDescription] = useState(pack?.description || '')
-  const [roomId, setRoomId] = useState(pack?.room_id ?? 202)
-  const [sourceUrl, setSourceUrl] = useState(pack?.pack_source_url || '')
-  const [assignments, setAssignments] = useState(
-    Array.isArray(pack?.role_assignments) && pack.role_assignments.length > 0
-      ? pack.role_assignments.map(a => ({ role: a.role || '', bot_name: a.bot_name || '' }))
-      : [{ role: '', bot_name: '' }]
-  )
-  const [saving, setSaving] = useState(false)
-  const [formError, setFormError] = useState(null)
-
-  function addAssignment() {
-    setAssignments(prev => [...prev, { role: '', bot_name: '' }])
-  }
-
-  function removeAssignment(i) {
-    setAssignments(prev => prev.filter((_, idx) => idx !== i))
-  }
-
-  function updateAssignment(i, field, value) {
-    setAssignments(prev => prev.map((a, idx) => idx === i ? { ...a, [field]: value } : a))
-  }
-
-  async function handleSave() {
-    if (!name.trim()) { setFormError('Name is required'); return }
-    setSaving(true)
-    setFormError(null)
-    try {
-      await onSave({
-        name: name.trim(),
-        description: description.trim(),
-        room_id: Number(roomId),
-        pack_source_url: sourceUrl.trim(),
-        role_assignments: assignments.filter(a => a.role.trim()),
-      })
-    } catch (e) {
-      setFormError(e.message)
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-      <h3 className="font-semibold text-sm text-foreground">{pack ? 'Edit Pack' : 'New Pack'}</h3>
-
-      {formError && (
-        <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 px-3 py-2 rounded-lg">
-          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {formError}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-foreground">Name</label>
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="My Pack"
-            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-foreground">Room ID</label>
-          <input
-            type="number"
-            value={roomId}
-            onChange={e => setRoomId(e.target.value)}
-            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-          />
-        </div>
-      </div>
-
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-foreground">Description</label>
-        <input
-          value={description}
-          onChange={e => setDescription(e.target.value)}
-          placeholder="What does this pack do?"
-          className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-foreground">Pack Source URL</label>
-        <input
-          value={sourceUrl}
-          onChange={e => setSourceUrl(e.target.value)}
-          placeholder="https://raw.githubusercontent.com/.../orchestrator.md"
-          className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
-        />
-      </div>
-
-      {/* Role assignments */}
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-foreground">Role Assignments</label>
-        {assignments.map((a, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input
-              value={a.role}
-              onChange={e => updateAssignment(i, 'role', e.target.value)}
-              placeholder="researcher"
-              className="flex-1 text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-            />
-            <span className="text-muted-foreground text-sm flex-shrink-0">→</span>
-            <select
-              value={a.bot_name}
-              onChange={e => updateAssignment(i, 'bot_name', e.target.value)}
-              className="flex-1 text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-            >
-              <option value="">Select bot…</option>
-              {bots.map(b => (
-                <option key={b.id ?? b.name} value={b.name}>{b.name}</option>
-              ))}
-            </select>
-            <button
-              onClick={() => removeAssignment(i)}
-              className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex-shrink-0"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ))}
-        <button
-          onClick={addAssignment}
-          className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
-        >
-          <Plus className="w-3 h-3" /> Add Role
-        </button>
-      </div>
-
-      {/* Actions */}
-      <div className="flex gap-2 pt-1">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-        >
-          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        <button
-          onClick={onCancel}
-          className="text-xs border border-border px-4 py-2 rounded-md hover:bg-secondary transition-colors"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ── Integrated View ───────────────────────────────────────────────────────
 
-function IntegratedView({ onAfterTrigger, liveBots = [] }) {
+function IntegratedView({ me, onAfterTrigger, liveBots = [] }) {
   const [personas, setPersonas] = useState([])
   const [teams, setTeams] = useState([])
   const [bots, setBots] = useState([])
@@ -1066,14 +657,17 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
   const [toast, setToast] = useState(null)
   const [deployingIds, setDeployingIds] = useState(new Set())
 
+  const isBasic = me?.ai_tier === 'basic'
+  const isDev = me?.is_developer
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const [pd, bd, td, rd] = await Promise.all([
-        api('/api/agents/personas'),
-        api('/api/agents/bots'),
-        api('/api/agents/teams'),
+        api('/api/my/personas'),
+        api('/api/agents/bots?mine=true'),
+        api('/api/my/teams'),
         api('/api/hotel/rooms'),
       ])
       setPersonas(pd.personas || [])
@@ -1083,7 +677,7 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
       setRooms(roomList)
       if (roomList.length > 0 && !selectedRoomId) setSelectedRoomId(roomList[0].id)
     } catch (e) {
-      setError(e.message)
+      setError(friendlyFetchError(e))
     } finally {
       setLoading(false)
     }
@@ -1099,9 +693,8 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
   async function deployTeam(team) {
     setDeployingIds(prev => new Set([...prev, team.id]))
     try {
-      await api(`/api/agents/teams/${team.id}/trigger`, { method: 'POST', body: JSON.stringify({ room_id: selectedRoomId }) })
+      await api(`/api/my/teams/${team.id}/trigger`, { method: 'POST', body: JSON.stringify({ room_id: selectedRoomId }) })
       showToast(`Team "${team.name}" deployed!`)
-      // Fetch logs immediately + again after 2s/4s to catch fast crashes
       onAfterTrigger?.()
       setTimeout(() => onAfterTrigger?.(), 2000)
       setTimeout(() => onAfterTrigger?.(), 4000)
@@ -1116,22 +709,24 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
   async function deleteTeam(team) {
     if (!confirm(`Delete team "${team.name}"?`)) return
     setTeams(prev => prev.filter(t => t.id !== team.id))
-    try { await api(`/api/agents/teams/${team.id}`, { method: 'DELETE' }) }
-    catch { load() }
+    try {
+      await api(`/api/my/teams/${team.id}`, { method: 'DELETE' })
+    } catch { load() }
   }
 
   async function deletePersona(persona) {
     if (!confirm(`Delete agent "${persona.name}"?`)) return
     setPersonas(prev => prev.filter(p => p.id !== persona.id))
-    try { await api(`/api/agents/personas/${persona.id}`, { method: 'DELETE' }) }
-    catch { load() }
+    try {
+      await api(`/api/my/personas/${persona.id}`, { method: 'DELETE' })
+    } catch { load() }
   }
 
   async function savePersona(data) {
     if (editingPersona) {
-      await api(`/api/agents/personas/${editingPersona.id}`, { method: 'PUT', body: JSON.stringify(data) })
+      await api(`/api/my/personas/${editingPersona.id}`, { method: 'PUT', body: JSON.stringify(data) })
     } else {
-      await api('/api/agents/personas', { method: 'POST', body: JSON.stringify(data) })
+      await api('/api/my/personas', { method: 'POST', body: JSON.stringify(data) })
     }
     setShowPersonaForm(false)
     setEditingPersona(null)
@@ -1141,9 +736,9 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
   async function saveTeam(data) {
     let teamId = editingTeam?.id
     if (editingTeam) {
-      await api(`/api/agents/teams/${editingTeam.id}`, { method: 'PUT', body: JSON.stringify(data) })
+      await api(`/api/my/teams/${editingTeam.id}`, { method: 'PUT', body: JSON.stringify(data) })
     } else {
-      const r = await api('/api/agents/teams', { method: 'POST', body: JSON.stringify(data) })
+      const r = await api('/api/my/teams', { method: 'POST', body: JSON.stringify(data) })
       teamId = r.id
     }
     setShowTeamForm(false)
@@ -1154,6 +749,16 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
 
   if (loading) return <LoadingState />
   if (error) return <ErrorBanner message={error} onRetry={load} />
+
+  if (isBasic && !isDev) {
+    return (
+      <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-3">
+        <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+        <h3 className="text-sm font-semibold text-foreground">Pro tier required</h3>
+        <p className="text-xs text-muted-foreground">Upgrade to Pro to create and deploy agent teams. Browse available teams in the Marketplace.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-8">
@@ -1190,6 +795,7 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
           <IntegratedTeamForm
             team={editingTeam}
             personas={personas}
+            isDev={isDev}
             onSave={saveTeam}
             onCancel={() => { setShowTeamForm(false); setEditingTeam(null) }}
           />
@@ -1220,6 +826,7 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
               <IntegratedTeamCard
                 key={team.id}
                 team={team}
+                isDev={isDev}
                 bots={bots}
                 liveBots={liveBots}
                 selectedRoomId={selectedRoomId}
@@ -1288,16 +895,20 @@ function IntegratedView({ onAfterTrigger, liveBots = [] }) {
 
 // ── Integrated Team Card ───────────────────────────────────────────────────
 
-function IntegratedTeamCard({ team, bots = [], liveBots = [], selectedRoomId, deploying, onDeploy, onEdit, onDelete }) {
+function IntegratedTeamCard({ team, isDev, bots = [], liveBots = [], selectedRoomId, deploying, onDeploy, onEdit, onDelete }) {
   const [expanded, setExpanded] = useState(false)
-  const [members, setMembers] = useState(null) // null = still loading
+  const [members, setMembers] = useState(team.members || null) // null = still loading
 
-  // Eagerly fetch members so we can compute room conflict warning
+  // Load members: list endpoint usually includes them; otherwise fetch single team (marketplace vs user-scoped)
   useEffect(() => {
-    api(`/api/agents/teams/${team.id}/members`)
-      .then(d => setMembers(d.members || []))
-      .catch(() => setMembers([])) // on error, don't block
-  }, [team.id])
+    if (team.members) {
+      setMembers(team.members)
+      return
+    }
+    api(`/api/my/teams/${team.id}`)
+      .then(d => setMembers(d.team?.members || []))
+      .catch(() => setMembers([]))
+  }, [team.id, team.members])
 
   const memberBotNames = useMemo(() => (members || []).map(m => m.bot_name).filter(Boolean), [members])
 
@@ -1347,7 +958,7 @@ function IntegratedTeamCard({ team, bots = [], liveBots = [], selectedRoomId, de
             <p className="text-xs text-muted-foreground mt-0.5 truncate">{team.description}</p>
           )}
         </div>
-        <span className="text-xs text-muted-foreground flex-shrink-0">{team.member_count || 0} agent{team.member_count !== 1 ? 's' : ''}</span>
+        <span className="text-xs text-muted-foreground flex-shrink-0">{team.member_count ?? (members || []).length} agent{(team.member_count ?? (members || []).length) !== 1 ? 's' : ''}</span>
         <button
           onClick={() => setExpanded(e => !e)}
           className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
@@ -1377,40 +988,38 @@ function IntegratedTeamCard({ team, bots = [], liveBots = [], selectedRoomId, de
 
       {/* Expanded members */}
       {expanded && (
-        <IntegratedTeamMembers teamId={team.id} bots={bots} liveBots={liveBots} selectedRoomId={selectedRoomId} />
+        <IntegratedTeamMembers members={members} bots={bots} liveBots={liveBots} selectedRoomId={selectedRoomId} />
       )}
     </div>
   )
 }
 
-function IntegratedTeamMembers({ teamId, bots = [], liveBots = [], selectedRoomId }) {
-  const [data, setData] = useState(null)
+function IntegratedTeamMembers({ members, bots = [], liveBots = [], selectedRoomId }) {
+  if (members === null) {
+    return (
+      <div className="border-t border-border px-4 py-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading members…
+      </div>
+    )
+  }
 
-  useEffect(() => {
-    api(`/api/agents/teams/${teamId}`).then(d => setData(d.team)).catch(() => {})
-  }, [teamId])
-
-  if (!data) return (
-    <div className="border-t border-border px-4 py-3 flex items-center gap-2 text-xs text-muted-foreground">
-      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading members…
-    </div>
-  )
-
-  if (!data.members?.length) return (
-    <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
-      No members assigned yet.
-    </div>
-  )
+  if (!members?.length) {
+    return (
+      <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
+        No members assigned yet.
+      </div>
+    )
+  }
 
   return (
     <div className="border-t border-border divide-y divide-border">
-      {data.members.map(m => {
+      {members.map(m => {
         const figure = bots.find(b => b.name === m.bot_name)?.figure || null
         const liveBot = bots.find(b => b.name?.toLowerCase() === m.bot_name?.toLowerCase())
         const inWrongRoom = liveBot && liveBot.room_id > 0 && selectedRoomId && liveBot.room_id !== selectedRoomId
         const noBot = !m.bot_name?.trim()
         return (
-          <div key={m.id} className="flex items-center gap-3 px-4 py-2.5">
+          <div key={m.id ?? `${m.persona_id}-${m.name}`} className="flex items-center gap-3 px-4 py-2.5">
             <HabboFigure figure={figure} size="sm" animate={true} />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground">{m.name}</p>
@@ -1448,7 +1057,7 @@ const TEAM_LANGUAGES = [
   { code: 'sv', label: '🇸🇪 Swedish' },
 ]
 
-function IntegratedTeamForm({ team, personas, onSave, onCancel }) {
+function IntegratedTeamForm({ team, personas, isDev, onSave, onCancel }) {
   const [name, setName] = useState(team?.name || '')
   const [description, setDescription] = useState(team?.description || '')
   const [orchestratorPrompt, setOrchestratorPrompt] = useState(team?.orchestrator_prompt || '')
@@ -1464,7 +1073,7 @@ function IntegratedTeamForm({ team, personas, onSave, onCancel }) {
 
   useEffect(() => {
     if (!team?.id) return
-    api(`/api/agents/teams/${team.id}`).then(d => {
+    api(`/api/my/teams/${team.id}`).then(d => {
       setMembers((d.team?.members || []).map(m => ({ id: m.id, persona_id: m.persona_id, name: m.name, role: m.role || '' })))
     }).catch(() => {})
   }, [team?.id])
@@ -1496,23 +1105,24 @@ function IntegratedTeamForm({ team, personas, onSave, onCancel }) {
       const teamId = savedTeam?.id || team?.id
       if (teamId) {
         // Sync members: fetch current from server, diff, add/remove
-        const fresh = await api(`/api/agents/teams/${teamId}`)
+        const fresh = await api(`/api/my/teams/${teamId}`)
         const serverMembers = fresh.team?.members || []
         const serverIds = serverMembers.map(m => m.id)
         const localIds = members.filter(m => m.id).map(m => m.id)
         // Remove members that were deleted locally
         for (const sm of serverMembers) {
           if (!members.find(m => m.id === sm.id)) {
-            await api(`/api/agents/teams/${teamId}/members/${sm.id}`, { method: 'DELETE' })
+            await api(`/api/my/teams/${teamId}/members/${sm.id}`, { method: 'DELETE' })
           }
         }
         // Add new members (those without an id yet)
         for (const m of members) {
           if (!m.id) {
-            await api(`/api/agents/teams/${teamId}/members`, { method: 'POST', body: { persona_id: m.persona_id, role: m.role } })
+            await api(`/api/my/teams/${teamId}/members`, { method: 'POST', body: { persona_id: m.persona_id, role: m.role } })
           }
         }
       }
+      setSaving(false)
     } catch (e) {
       setFormError(e.message)
       setSaving(false)
