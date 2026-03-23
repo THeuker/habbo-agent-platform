@@ -89,6 +89,41 @@ export function AccountView({ me, onKeyUpdated }) {
   const [deleting, setDeleting] = useState(false)
   const [msg, setMsg] = useState(null) // { type: 'success'|'error', text }
 
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showCurrentPw, setShowCurrentPw] = useState(false)
+  const [showNewPw, setShowNewPw] = useState(false)
+  const [pwSaving, setPwSaving] = useState(false)
+  const [pwMsg, setPwMsg] = useState(null) // { type: 'success'|'error', text }
+
+  async function handleChangePassword() {
+    setPwMsg(null)
+    if (newPassword !== confirmPassword) {
+      setPwMsg({ type: 'error', text: 'New passwords do not match.' })
+      return
+    }
+    if (newPassword.length < 8) {
+      setPwMsg({ type: 'error', text: 'New password must be at least 8 characters.' })
+      return
+    }
+    setPwSaving(true)
+    try {
+      await api('/api/account/password', {
+        method: 'POST',
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      })
+      setPwMsg({ type: 'success', text: 'Password updated successfully.' })
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+    } catch (e) {
+      setPwMsg({ type: 'error', text: e.message })
+    } finally {
+      setPwSaving(false)
+    }
+  }
+
   const loadKeys = useCallback(async () => {
     setLoading(true)
     try {
@@ -234,6 +269,77 @@ export function AccountView({ me, onKeyUpdated }) {
               </button>
             </div>
             <p className="text-xs text-muted-foreground">Get your key at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" className="text-primary hover:underline">console.anthropic.com</a></p>
+          </div>
+        </div>
+      </section>
+
+      {/* Change Password */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2"><Shield className="w-4 h-4" /> Change Password</h2>
+        <div className="bg-card border border-border rounded-xl p-4 space-y-4">
+          {pwMsg && (
+            <div className={`text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${pwMsg.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+              {pwMsg.type === 'success' ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+              {pwMsg.text}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {/* Current password */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">Current password</label>
+              <div className="relative">
+                <input
+                  type={showCurrentPw ? 'text' : 'password'}
+                  value={currentPassword}
+                  onChange={e => setCurrentPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 pr-10"
+                />
+                <button type="button" onClick={() => setShowCurrentPw(v => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showCurrentPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* New password */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">New password</label>
+              <div className="relative">
+                <input
+                  type={showNewPw ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="Min. 8 characters"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 pr-10"
+                />
+                <button type="button" onClick={() => setShowNewPw(v => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showNewPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Confirm new password */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">Confirm new password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Repeat new password"
+                onKeyDown={e => e.key === 'Enter' && handleChangePassword()}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+            </div>
+
+            <button
+              onClick={handleChangePassword}
+              disabled={pwSaving || !currentPassword || !newPassword || !confirmPassword}
+              className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              {pwSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              Update password
+            </button>
           </div>
         </div>
       </section>

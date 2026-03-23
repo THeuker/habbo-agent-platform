@@ -1203,6 +1203,33 @@ app.delete('/api/account/api-keys/:provider', authRequired, async (req, res) => 
   res.json({ ok: true, message: 'API key removed' });
 });
 
+// ─── Account: change own password ─────────────────────────────────────────────
+app.post('/api/account/password', authRequired, async (req, res) => {
+  const currentPassword = String(req.body?.current_password || '');
+  const newPassword     = String(req.body?.new_password || '');
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'current_password and new_password are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  const [rows] = await db.execute(
+    'SELECT id, password_hash FROM portal_users WHERE habbo_user_id = ? LIMIT 1',
+    [req.user.habbo_user_id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'User not found' });
+
+  const match = await bcrypt.compare(currentPassword, rows[0].password_hash);
+  if (!match) return res.status(400).json({ error: 'Current password is incorrect' });
+
+  const newHash = await bcrypt.hash(newPassword, 12);
+  await db.execute('UPDATE portal_users SET password_hash = ? WHERE id = ?', [newHash, rows[0].id]);
+
+  res.json({ ok: true, message: 'Password updated successfully' });
+});
+
 // ─── Internal: get decrypted API key for a portal user ────────────────────────
 app.get('/api/internal/user/:portalUserId/api-key/:provider', async (req, res) => {
   const secret = req.headers['x-internal-secret'];

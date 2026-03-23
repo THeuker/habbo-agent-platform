@@ -109,6 +109,8 @@ services:
       - PORTAL_SMTP_PORT=${HABBO_PORTAL_SMTP_PORT:-1025}
       - PORTAL_SMTP_SECURE=${HABBO_PORTAL_SMTP_SECURE:-false}
       - PORTAL_SMTP_FROM=${HABBO_PORTAL_SMTP_FROM:-Agent Hotel <no-reply@hotel.local>}
+      - PORTAL_SMTP_USER=${HABBO_PORTAL_SMTP_USER:-}
+      - PORTAL_SMTP_PASS=${HABBO_PORTAL_SMTP_PASS:-}
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_NAME=arcturus
