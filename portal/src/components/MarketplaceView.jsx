@@ -89,7 +89,7 @@ function TeamCard({ team, installed, installing, onInstall, disabled }) {
           </div>
           <div className="flex-shrink-0">
             {installed ? (
-              <span className="inline-flex items-center gap-1 text-xs text-green-400 bg-green-500/10 px-2.5 py-1.5 rounded-lg">
+              <span className="inline-flex items-center gap-1 text-xs text-success bg-success/10 px-2.5 py-1.5 rounded-lg">
                 <Check className="w-3 h-3" /> Installed
               </span>
             ) : (
@@ -360,9 +360,9 @@ export function MarketplaceView({ me }) {
 
   if (error) {
     return (
-      <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-center">
-        <AlertCircle className="w-5 h-5 text-red-400 mx-auto mb-2" />
-        <p className="text-sm text-red-300">{error}</p>
+      <div className="bg-destructive/10 border border-destructive/30 rounded-xl p-4 text-center">
+        <AlertCircle className="w-5 h-5 text-destructive mx-auto mb-2" />
+        <p className="text-sm text-destructive/80">{error}</p>
       </div>
     )
   }
@@ -376,18 +376,18 @@ export function MarketplaceView({ me }) {
       </div>
 
       {isBasic && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
-          <AlertCircle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
+        <div className="bg-warning/10 border border-warning/30 rounded-xl p-4 flex items-start gap-3">
+          <AlertCircle className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm text-amber-300 font-medium">Pro tier required</p>
-            <p className="text-xs text-amber-300/70 mt-0.5">Upgrade to Pro to install and deploy agent teams.</p>
+            <p className="text-sm text-warning/80 font-medium">Pro tier required</p>
+            <p className="text-xs text-warning/80/70 mt-0.5">Upgrade to Pro to install and deploy agent teams.</p>
           </div>
         </div>
       )}
 
       {/* Toast */}
       {toast && (
-        <div className={`rounded-lg px-4 py-2.5 text-sm ${toast.type === 'error' ? 'bg-red-500/10 text-red-300 border border-red-500/30' : 'bg-green-500/10 text-green-300 border border-green-500/30'}`}>
+        <div className={`rounded-lg px-4 py-2.5 text-sm ${toast.type === 'error' ? 'bg-destructive/10 text-destructive/80 border border-destructive/30' : 'bg-success/10 text-success border border-success/30'}`}>
           {toast.msg}
         </div>
       )}

@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback } from 'react'
 import { HabboFigure } from './components/HabboFigure'
 import { AgentDashboard, AccountView } from './components/AgentDashboard'
 import { MarketplaceView } from './components/MarketplaceView'
+import { useTheme } from './ThemeContext'
 import {
   Home, Bot, Key, Users, LogOut, Hotel, ShoppingBag,
   Eye, EyeOff, Loader2, AlertCircle, CheckCircle,
   Wifi, WifiOff, Copy, Check, Trash2, RefreshCw,
   Edit, Settings, Square, User, ArrowUpCircle, Bell,
-  ClipboardList, X,
+  ClipboardList, X, Sun, Moon,
 } from 'lucide-react'
 
 // ── API helper ────────────────────────────────────────────────────────────
@@ -130,7 +131,7 @@ function AuthPage({ onLogin }) {
     setBusy(true); setError(''); setMessage('')
     try {
       const data = await api('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify(forgotForm) })
-      setMessage(`${data.message} Check Mailpit at http://127.0.0.1:8025`)
+      setMessage('A password reset link has been sent to your inbox.')
       setForgotForm({ email: '' })
       setShowForgot(false)
     } catch (err) { setError(err.message) }
@@ -186,7 +187,7 @@ function AuthPage({ onLogin }) {
             </div>
           )}
           {message && (
-            <div className="flex items-start gap-2 p-3 mb-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm">
+            <div className="flex items-start gap-2 p-3 mb-4 rounded-lg bg-success/10 border border-success/20 text-success text-sm">
               <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <span>{message}</span>
             </div>
@@ -297,7 +298,7 @@ function AuthPage({ onLogin }) {
           <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl">
             <h2 className="text-base font-semibold mb-1">Forgot Password</h2>
             <p className="text-xs text-muted-foreground mb-4">
-              Enter your account email to receive a reset link via Mailpit.
+              Enter your account email to receive a password reset link.
             </p>
             {error && (
               <div className="flex items-start gap-2 p-3 mb-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs">
@@ -369,6 +370,7 @@ function AuthButton({ busy, label, busyLabel }) {
 // ── Dashboard ─────────────────────────────────────────────────────────────
 
 function Dashboard({ me, setMe }) {
+  const { theme, toggleTheme } = useTheme()
   const [activeTab, setActiveTab] = useState('home')
   const [activeTeam, setActiveTeam] = useState(null)
   const [stopping, setStopping] = useState(false)
@@ -485,7 +487,7 @@ function Dashboard({ me, setMe }) {
               {hotelStatus.loading ? (
                 <Loader2 className="w-3 h-3 animate-spin" />
               ) : hotelStatus.socket_online ? (
-                <Wifi className="w-3 h-3 text-green-400" />
+                <Wifi className="w-3 h-3 text-success" />
               ) : (
                 <WifiOff className="w-3 h-3 text-muted-foreground" />
               )}
@@ -504,13 +506,13 @@ function Dashboard({ me, setMe }) {
 
             {/* Active team indicator */}
             {activeTeam && (
-              <div className="hidden sm:flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-lg px-2.5 py-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
-                <span className="text-xs text-green-400 font-medium">Room {activeTeam.roomId}</span>
+              <div className="hidden sm:flex items-center gap-2 bg-success/10 border border-success/30 rounded-lg px-2.5 py-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse flex-shrink-0" />
+                <span className="text-xs text-success font-medium">Room {activeTeam.roomId}</span>
                 <button
                   onClick={stopTeam}
                   disabled={stopping}
-                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 ml-1 transition-colors disabled:opacity-50"
+                  className="flex items-center gap-1 text-xs text-destructive hover:text-destructive/70 ml-1 transition-colors disabled:opacity-50"
                   title="Stop team"
                 >
                   <Square className="w-3 h-3" />
@@ -528,6 +530,17 @@ function Dashboard({ me, setMe }) {
               {me.username}
               <Settings className="w-3.5 h-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
             </button>
+
+            {/* Theme toggle */}
+            <button
+              onClick={toggleTheme}
+              className="h-8 w-8 flex items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            >
+              {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+            </button>
+
             <button onClick={handleLogout} disabled={busy}
               className="flex items-center gap-1.5 h-8 px-3 text-xs border border-border rounded-md hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
               <LogOut className="w-3 h-3" />
@@ -607,19 +620,19 @@ function HomeTab({ me, hotelStatus, onJoinHotel, busy }) {
       {/* Upgrade CTA for basic users */}
       {activeTier === 'basic' && (
         upgradeRequest?.status === 'pending' ? (
-          <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-            <Bell className="w-4 h-4 text-amber-400 shrink-0" />
+          <div className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3">
+            <Bell className="w-4 h-4 text-warning shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-amber-300">Upgrade request pending</p>
-              <p className="text-xs text-amber-300/70 mt-0.5">Your request for <span className="capitalize">{upgradeRequest.requested_tier}</span> tier is being reviewed. We'll email you when it's decided.</p>
+              <p className="text-sm font-medium text-warning/80">Upgrade request pending</p>
+              <p className="text-xs text-warning/80/70 mt-0.5">Your request for <span className="capitalize">{upgradeRequest.requested_tier}</span> tier is being reviewed. We'll email you when it's decided.</p>
             </div>
           </div>
         ) : upgradeRequest?.status === 'denied' ? (
-          <div className="flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+          <div className="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+            <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-red-300">Upgrade request denied</p>
-              {upgradeRequest.admin_note && <p className="text-xs text-red-300/70 mt-0.5">{upgradeRequest.admin_note}</p>}
+              <p className="text-sm font-medium text-destructive/80">Upgrade request denied</p>
+              {upgradeRequest.admin_note && <p className="text-xs text-destructive/80/70 mt-0.5">{upgradeRequest.admin_note}</p>}
             </div>
             <button onClick={() => setShowUpgradeModal(true)}
               className="shrink-0 text-xs h-8 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
@@ -687,7 +700,7 @@ function HomeTab({ me, hotelStatus, onJoinHotel, busy }) {
           label="Hotel Socket"
           value={hotelStatus.loading ? 'Checking...' : hotelStatus.socket_online ? 'Online' : 'Offline'}
           icon={hotelStatus.socket_online ? Wifi : WifiOff}
-          valueClassName={hotelStatus.socket_online ? 'text-green-400' : 'text-muted-foreground'}
+          valueClassName={hotelStatus.socket_online ? 'text-success' : 'text-muted-foreground'}
         />
       </div>
 
@@ -845,7 +858,7 @@ function BotsTab({ figureTypes }) {
       </div>
 
       {botsMeta?.rcon && !botsMeta.rcon.verified && botsMeta.rcon.roomsRequested > 0 && (
-        <div className="text-xs rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-100 px-3 py-2 space-y-1">
+        <div className="text-xs rounded-lg border border-warning/30 bg-warning/10 text-warning/90 px-3 py-2 space-y-1">
           <p className="font-medium">Live bot status is not verified against the emulator</p>
           <p className="opacity-90">
             RCON to <code className="text-[10px]">{botsMeta.rcon.host}:{botsMeta.rcon.port}</code> failed or the
@@ -886,10 +899,10 @@ function BotsTab({ figureTypes }) {
               statusBadgeClass = 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
               statusLabel = `Stale DB · room ${bot.stale_db_room_id || '?'}`
             } else if (live) {
-              statusBadgeClass = 'bg-green-500/10 text-green-400 border border-green-500/20'
+              statusBadgeClass = 'bg-success/10 text-success border border-success/20'
               statusLabel = `Live · ${bot.live_room_name || `#${bot.live_room_id}`}`
             } else if (placed) {
-              statusBadgeClass = 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+              statusBadgeClass = 'bg-warning/10 text-warning border border-warning/20'
               statusLabel = `Placed · ${bot.db_room_name || `#${bot.db_room_id}`}`
             }
             return (
@@ -940,7 +953,7 @@ function BotsTab({ figureTypes }) {
                       <p className="text-xs text-muted-foreground italic truncate">"{bot.motto}"</p>
                     )}
                     {msg && (
-                      <p className={`text-xs ${msg.type === 'err' ? 'text-destructive' : 'text-green-400'}`}>
+                      <p className={`text-xs ${msg.type === 'err' ? 'text-destructive' : 'text-success'}`}>
                         {msg.text}
                       </p>
                     )}
@@ -1190,7 +1203,7 @@ function UpgradeRequestsTab({ onCountChange }) {
       </div>
 
       {toast && (
-        <div className={`rounded-lg px-4 py-2.5 text-sm ${toast.type === 'error' ? 'bg-red-500/10 text-red-300 border border-red-500/30' : 'bg-green-500/10 text-green-300 border border-green-500/30'}`}>
+        <div className={`rounded-lg px-4 py-2.5 text-sm ${toast.type === 'error' ? 'bg-destructive/10 text-destructive border border-destructive/30' : 'bg-success/10 text-success border border-success/30'}`}>
           {toast.msg}
         </div>
       )}
@@ -1251,7 +1264,7 @@ function UpgradeRequestsTab({ onCountChange }) {
                   {/* Status badge for non-pending */}
                   {req.status !== 'pending' && (
                     <span className={`shrink-0 text-xs px-2.5 py-1 rounded-lg capitalize ${
-                      req.status === 'approved' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                      req.status === 'approved' ? 'bg-success/10 text-success border border-success/20' : 'bg-destructive/10 text-destructive border border-destructive/20'
                     }`}>
                       {req.status}
                     </span>
@@ -1278,8 +1291,8 @@ function UpgradeRequestsTab({ onCountChange }) {
                           disabled={!!busy[req.id]}
                           className={`flex-1 h-8 text-xs rounded-md font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 ${
                             reviewing.decision === 'approved'
-                              ? 'bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20'
-                              : 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20'
+                              ? 'bg-success/10 text-success border border-success/30 hover:bg-success/20'
+                              : 'bg-destructive/10 text-destructive border border-destructive/30 hover:bg-destructive/20'
                           }`}>
                           {busy[req.id] && <Loader2 className="w-3 h-3 animate-spin" />}
                           Confirm {reviewing.decision}
@@ -1289,11 +1302,11 @@ function UpgradeRequestsTab({ onCountChange }) {
                   ) : (
                     <div className="flex gap-2 mt-3 pt-3 border-t border-border/60">
                       <button onClick={() => { setReviewing({ id: req.id, decision: 'denied' }); setAdminNote('') }}
-                        className="flex-1 h-8 text-xs rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors">
+                        className="flex-1 h-8 text-xs rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
                         Deny
                       </button>
                       <button onClick={() => { setReviewing({ id: req.id, decision: 'approved' }); setAdminNote('') }}
-                        className="flex-1 h-8 text-xs rounded-md bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 transition-colors font-medium">
+                        className="flex-1 h-8 text-xs rounded-md bg-success/10 text-success border border-success/30 hover:bg-success/20 transition-colors font-medium">
                         Approve
                       </button>
                     </div>
@@ -1378,7 +1391,7 @@ function McpTab({ me }) {
         </div>
       )}
       {message && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm">
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-success/10 border border-success/20 text-success text-sm">
           <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
           {message}
         </div>
@@ -1396,15 +1409,15 @@ function McpTab({ me }) {
         <>
           {/* New token */}
           {newMcpToken?.value && (
-            <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 space-y-2">
-              <p className="text-sm font-medium text-green-400">Copy this token now — it is only shown once!</p>
+            <div className="bg-success/10 border border-success/20 rounded-xl p-4 space-y-2">
+              <p className="text-sm font-medium text-success">Copy this token now — it is only shown once!</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 font-mono text-xs bg-background/50 border border-border rounded-lg px-3 py-2 break-all">
                   {newMcpToken.value}
                 </code>
                 <button onClick={() => copyToken(newMcpToken.value)}
                   className="h-9 w-9 flex-shrink-0 flex items-center justify-center border border-border rounded-lg hover:bg-secondary transition-colors">
-                  {copiedId === newMcpToken.value ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                  {copiedId === newMcpToken.value ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
                 </button>
               </div>
             </div>
@@ -1470,7 +1483,7 @@ function McpTab({ me }) {
               <div className="space-y-2 max-h-80 overflow-y-auto">
                 {mcpData.calls.map(call => (
                   <div key={call.id} className="flex items-start gap-3 p-3 rounded-xl border border-border bg-card/50">
-                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${call.success ? 'bg-green-400' : 'bg-destructive'}`} />
+                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${call.success ? 'bg-success' : 'bg-destructive'}`} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground">
                         {call.tool_name}
@@ -1480,7 +1493,7 @@ function McpTab({ me }) {
                         {call.duration_ms}ms &middot; {call.created_at}
                       </p>
                     </div>
-                    <span className={`text-xs ${call.success ? 'text-green-400' : 'text-destructive'}`}>
+                    <span className={`text-xs ${call.success ? 'text-success' : 'text-destructive'}`}>
                       {call.success ? 'ok' : 'error'}
                     </span>
                   </div>

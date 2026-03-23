@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { HabboFigure } from './HabboFigure'
 import { friendlyFetchError } from '../utils/fetchError'
+import { useTheme } from '../ThemeContext'
 import {
   Bot, Edit2, Trash2, Plus, X, Check,
   Loader2, AlertCircle, AlertTriangle, Users, Zap, ChevronDown, ChevronUp, Square,
   Shield, Wifi, WifiOff, Key, ServerCog, Terminal, RefreshCw, User, Eye, EyeOff,
+  Sun, Moon,
 } from 'lucide-react'
 
 // ── Markdown Editor ───────────────────────────────────────────────────────
@@ -46,7 +48,7 @@ function MarkdownEditor({ value, onChange, placeholder, rows = 16 }) {
 
       {/* Preview mode */}
       {mode === 'preview' && (
-        <div className="px-4 py-3 min-h-[200px] bg-background prose prose-sm prose-invert max-w-none
+        <div className="px-4 py-3 min-h-[200px] bg-background prose prose-sm dark:prose-invert max-w-none
           [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-foreground [&_h1]:mb-2
           [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h2]:mt-4 [&_h2]:mb-1
           [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-foreground [&_h3]:mt-3 [&_h3]:mb-1
@@ -81,6 +83,7 @@ async function api(url, opts = {}) {
 // ── Account View ──────────────────────────────────────────────────────────
 
 export function AccountView({ me, onKeyUpdated }) {
+  const { theme, toggleTheme } = useTheme()
   const [keys, setKeys] = useState([])
   const [loading, setLoading] = useState(true)
   const [newKey, setNewKey] = useState('')
@@ -202,7 +205,7 @@ export function AccountView({ me, onKeyUpdated }) {
           </p>
 
           {msg && (
-            <div className={`text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${msg.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+            <div className={`text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${msg.type === 'success' ? 'bg-success/10 text-success border border-success/20' : 'bg-destructive/10 text-destructive border border-destructive/20'}`}>
               {msg.type === 'success' ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
               {msg.text}
             </div>
@@ -222,7 +225,7 @@ export function AccountView({ me, onKeyUpdated }) {
                   <button
                     onClick={handleDelete}
                     disabled={deleting}
-                    className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-400/50 rounded px-2 py-1 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1 text-xs text-destructive hover:text-destructive/70 border border-destructive/30 hover:border-destructive/50 rounded px-2 py-1 transition-colors disabled:opacity-50"
                   >
                     {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                     Remove
@@ -233,7 +236,7 @@ export function AccountView({ me, onKeyUpdated }) {
             </div>
           ) : (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <AlertCircle className="w-3.5 h-3.5 text-yellow-400" />
+              <AlertCircle className="w-3.5 h-3.5 text-warning" />
               No personal key stored — server default key will be used.
             </div>
           )}
@@ -278,7 +281,7 @@ export function AccountView({ me, onKeyUpdated }) {
         <h2 className="text-sm font-semibold text-foreground flex items-center gap-2"><Shield className="w-4 h-4" /> Change Password</h2>
         <div className="bg-card border border-border rounded-xl p-4 space-y-4">
           {pwMsg && (
-            <div className={`text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${pwMsg.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+            <div className={`text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${pwMsg.type === 'success' ? 'bg-success/10 text-success border border-success/20' : 'bg-destructive/10 text-destructive border border-destructive/20'}`}>
               {pwMsg.type === 'success' ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
               {pwMsg.text}
             </div>
@@ -340,6 +343,47 @@ export function AccountView({ me, onKeyUpdated }) {
               {pwSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               Update password
             </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Appearance */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <Sun className="w-4 h-4" /> Appearance
+        </h2>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-foreground">Theme</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Choose light or dark interface.</p>
+            </div>
+            <div className="flex items-center gap-1 p-1 bg-secondary rounded-lg border border-border">
+              <button
+                onClick={() => theme === 'dark' && toggleTheme()}
+                className={`flex items-center gap-1.5 h-7 px-3 text-xs rounded-md transition-colors ${
+                  theme === 'light'
+                    ? 'bg-card text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-pressed={theme === 'light'}
+              >
+                <Sun className="w-3.5 h-3.5" />
+                Light
+              </button>
+              <button
+                onClick={() => theme === 'light' && toggleTheme()}
+                className={`flex items-center gap-1.5 h-7 px-3 text-xs rounded-md transition-colors ${
+                  theme === 'dark'
+                    ? 'bg-card text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-pressed={theme === 'dark'}
+              >
+                <Moon className="w-3.5 h-3.5" />
+                Dark
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -443,7 +487,7 @@ export function AgentDashboard({ me, onActiveTeamChange, onStopTeam }) {
               <Icon className="w-3.5 h-3.5" />
               {label}
               {badge && (
-                <span className="w-4 h-4 rounded-full bg-green-500 text-white text-[9px] font-bold flex items-center justify-center">
+                <span className="w-4 h-4 rounded-full bg-success text-success-foreground text-[9px] font-bold flex items-center justify-center">
                   {badge}
                 </span>
               )}
@@ -456,16 +500,16 @@ export function AgentDashboard({ me, onActiveTeamChange, onStopTeam }) {
       {teamError && (
         <div className={`border-b px-4 py-3 flex items-center gap-3 ${
           teamError.type === 'billing'
-            ? 'bg-amber-500/10 border-amber-500/30'
-            : 'bg-red-500/10 border-red-500/30'
+            ? 'bg-warning/10 border-warning/30'
+            : 'bg-destructive/10 border-red-500/30'
         }`}>
-          <AlertCircle className={`w-4 h-4 flex-shrink-0 ${teamError.type === 'billing' ? 'text-amber-400' : 'text-red-400'}`} />
-          <span className={`text-sm flex-1 ${teamError.type === 'billing' ? 'text-amber-300' : 'text-red-300'}`}>
+          <AlertCircle className={`w-4 h-4 flex-shrink-0 ${teamError.type === 'billing' ? 'text-warning' : 'text-destructive'}`} />
+          <span className={`text-sm flex-1 ${teamError.type === 'billing' ? 'text-warning/80' : 'text-destructive/80'}`}>
             {teamError.type === 'billing' && <strong>Billing: </strong>}
             {teamError.message}
             {teamError.type === 'billing' && (
               <a href="https://console.anthropic.com" target="_blank" rel="noreferrer"
-                className="ml-2 underline underline-offset-2 hover:text-amber-200">
+                className="ml-2 underline underline-offset-2 hover:text-warning/70">
                 Add credits →
               </a>
             )}
@@ -493,13 +537,13 @@ export function AgentDashboard({ me, onActiveTeamChange, onStopTeam }) {
 // ── Log Panel ─────────────────────────────────────────────────────────────
 
 const LOG_COLORS = {
-  '[tool→]':    'text-blue-400',
+  '[tool→]':    'text-info',
   '[tool←]':    'text-emerald-400',
-  '[think]':    'text-yellow-300/80',
+  '[think]':    'text-warning/80',
   '[done]':     'text-green-400 font-semibold',
   '[trigger]':  'text-purple-400',
   '[narrator]': 'text-pink-400',
-  '[claude:err]': 'text-red-400',
+  '[claude:err]': 'text-destructive',
   '[voice]':    'text-cyan-400',
 }
 
@@ -533,7 +577,7 @@ function LogPanel({ lines, paused, onTogglePause }) {
           </label>
           <button
             onClick={onTogglePause}
-            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded border transition-colors ${paused ? 'text-yellow-400 border-yellow-500/40 bg-yellow-500/10' : 'text-muted-foreground border-border hover:text-foreground'}`}
+            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded border transition-colors ${paused ? 'text-warning border-warning/40 bg-warning/10' : 'text-muted-foreground border-border hover:text-foreground'}`}
           >
             <RefreshCw className={`w-3 h-3 ${paused ? '' : 'animate-spin'}`} />
             {paused ? 'Paused' : 'Live'}
@@ -586,7 +630,7 @@ function DeveloperView({ mcpStatus, logLines, logPaused, setLogPaused }) {
         )}
 
         {!loading && mcpStatus?.error && (
-          <div className="px-5 py-4 flex items-center gap-2 text-amber-400">
+          <div className="px-5 py-4 flex items-center gap-2 text-warning">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span className="text-sm">{mcpStatus.error}</span>
           </div>
@@ -603,7 +647,7 @@ function DeveloperView({ mcpStatus, logLines, logPaused, setLogPaused }) {
             {servers.map(server => (
               <div key={server.name} className="px-5 py-4 flex items-center gap-4">
                 {/* Status dot */}
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${server.reachable ? 'bg-green-400' : 'bg-red-400'}`} />
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${server.reachable ? 'bg-success' : 'bg-destructive'}`} />
 
                 {/* Name + URL */}
                 <div className="flex-1 min-w-0">
@@ -624,8 +668,8 @@ function DeveloperView({ mcpStatus, logLines, logPaused, setLogPaused }) {
                 {/* Reachable badge */}
                 <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border font-medium ${
                   server.reachable
-                    ? 'text-green-400 border-green-500/30 bg-green-500/10'
-                    : 'text-red-400 border-red-500/30 bg-red-500/10'
+                    ? 'text-success border-success/30 bg-success/10'
+                    : 'text-destructive border-destructive/30 bg-destructive/10'
                 }`}>
                   {server.reachable
                     ? <><Wifi className="w-3 h-3" /> {server.statusCode ?? 'OK'}</>
@@ -680,7 +724,7 @@ function OnlineView({ me, liveBots }) {
       {/* Online section */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
           <h2 className="text-sm font-semibold text-foreground">Online</h2>
           <span className="text-xs text-muted-foreground">
             {agentCount} agent{agentCount !== 1 ? 's' : ''} in {roomCount} room{roomCount !== 1 ? 's' : ''}
@@ -694,7 +738,7 @@ function OnlineView({ me, liveBots }) {
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Object.entries(rooms).map(([roomId, bots]) => (
-              <div key={roomId} className="rounded-xl border border-yellow-500/25 bg-yellow-500/5 p-4 space-y-3">
+              <div key={roomId} className="rounded-xl border border-warning/25 bg-warning/5 p-4 space-y-3">
                 <div>
                   <p className="text-sm font-semibold text-foreground">{bots[0]?.room_name || `Room ${roomId}`}</p>
                   <p className="text-xs text-muted-foreground">#{roomId}</p>
@@ -705,7 +749,7 @@ function OnlineView({ me, liveBots }) {
                       <HabboFigure figure={bot.figure || bot.persona_figure || null} size="sm" animate={true} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground">{bot.persona_name || bot.name}</p>
-                        {bot.team_name && <p className="text-xs text-yellow-400/80">{bot.team_name}</p>}
+                        {bot.team_name && <p className="text-xs text-warning/80">{bot.team_name}</p>}
                       </div>
                       {(bot.x != null && bot.y != null) && (
                         <span className="text-[10px] text-muted-foreground/50 font-mono tabular-nums flex-shrink-0">
@@ -859,7 +903,7 @@ function IntegratedView({ me, onAfterTrigger, liveBots = [] }) {
   if (isBasic && !isDev) {
     return (
       <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-3">
-        <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+        <AlertCircle className="w-8 h-8 text-warning mx-auto" />
         <h3 className="text-sm font-semibold text-foreground">Pro tier required</h3>
         <p className="text-xs text-muted-foreground">Upgrade to Pro to create and deploy agent teams. Browse available teams in the Marketplace.</p>
       </div>
@@ -873,7 +917,7 @@ function IntegratedView({ me, onAfterTrigger, liveBots = [] }) {
         <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${
           toast.type === 'error'
             ? 'bg-destructive/10 border border-destructive/30 text-destructive'
-            : 'bg-green-500/10 border border-green-500/30 text-green-400'
+            : 'bg-success/10 border border-success/30 text-success'
         }`}>
           {toast.type === 'error' ? <AlertCircle className="w-4 h-4 flex-shrink-0" /> : <Check className="w-4 h-4 flex-shrink-0" />}
           {toast.msg}
@@ -1044,10 +1088,10 @@ function IntegratedTeamCard({ team, isDev, bots = [], liveBots = [], selectedRoo
   const blocked = !!roomConflict || hasUnlinked
 
   return (
-    <div className={`rounded-xl border bg-card overflow-hidden ${roomConflict ? 'border-yellow-500/40' : 'border-border'}`}>
+    <div className={`rounded-xl border bg-card overflow-hidden ${roomConflict ? 'border-warning/40' : 'border-border'}`}>
       {/* Room conflict warning */}
       {roomConflict && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/20 text-xs text-yellow-400">
+        <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 border-b border-warning/20 text-xs text-warning">
           <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
           {roomConflict}
         </div>
@@ -1083,7 +1127,7 @@ function IntegratedTeamCard({ team, isDev, bots = [], liveBots = [], selectedRoo
           title={roomConflict || undefined}
           className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors flex-shrink-0 ${
             blocked
-              ? 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30 cursor-not-allowed'
+              ? 'bg-warning/20 text-warning border border-warning/30 cursor-not-allowed'
               : 'bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed'
           }`}
         >
@@ -1132,12 +1176,12 @@ function IntegratedTeamMembers({ members, bots = [], liveBots = [], selectedRoom
               {m.role && <p className="text-xs text-muted-foreground">{m.role}</p>}
             </div>
             {noBot && (
-              <span className="text-xs bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
+              <span className="text-xs bg-destructive/10 text-destructive border border-destructive/20 px-2 py-0.5 rounded-full flex-shrink-0">
                 no bot linked
               </span>
             )}
             {m.bot_name && (
-              <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 border ${inWrongRoom ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>
+              <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 border ${inWrongRoom ? 'bg-warning/10 text-warning border-warning/20' : 'bg-info/10 text-info border-info/20'}`}>
                 {inWrongRoom ? `⚠ ${m.bot_name} (room ${liveBot.room_id})` : m.bot_name}
               </span>
             )}
@@ -1548,7 +1592,7 @@ function PersonaCard({ persona, bots = [], expanded, onEdit, onCollapse, onSave,
         </div>
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
           {persona.bot_name && (
-            <span className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">
+            <span className="inline-flex items-center text-xs bg-info/10 text-info border border-info/20 px-2 py-0.5 rounded-full">
               {persona.bot_name}
             </span>
           )}

@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Hotel Portal</title>
+    <!-- FOUC prevention: apply theme before CSS loads.
+         Storage key must match ThemeContext.jsx STORAGE_KEY = 'portal-theme' -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('portal-theme') !== 'light') {
+            document.documentElement.classList.add('dark')
+          }
+        } catch (e) {
+          document.documentElement.classList.add('dark')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
