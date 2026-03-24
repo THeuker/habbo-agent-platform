@@ -66,14 +66,18 @@ supervisord -c /app/supervisor/supervisord.conf
 seed_database_if_needed
 apply_config_overrides
 
-# Point figuredata URL to the local nitro assets server so the emulator does not
-# make a blocking outbound HTTPS call to habbo.com at startup.
+# Redirect all outbound habbo.com gamedata URLs to the local nitro assets server.
+# The ClothingValidationManager (added in Arcturus 3.5) fetches figuredata from
+# habbo.com synchronously on the main thread with no timeout — if the request is
+# slow or rate-limited the emulator hangs indefinitely. Pointing to localhost
+# gives an immediate response and avoids the hang.
 mysql --ssl=0 -h "${DB_HOST:-mysql}" -P "${DB_PORT:-3306}" \
   -u"${DB_USER:-arcturus_user}" -p"${DB_PASSWORD:-arcturus_pw}" \
-  "${DB_NAME:-arcturus}" -e \
-  "INSERT INTO emulator_settings (\`key\`, value)
-     VALUES ('gamedata.figuredata.url', 'http://nitro:8080/gamedata/FigureData.json')
-   ON DUPLICATE KEY UPDATE value='http://nitro:8080/gamedata/FigureData.json';" 2>/dev/null || true
+  "${DB_NAME:-arcturus}" -e "
+    INSERT INTO emulator_settings (\`key\`, value)
+      VALUES ('gamedata.figuredata.url', 'http://nitro:8080/gamedata/FigureData.json')
+    ON DUPLICATE KEY UPDATE value='http://nitro:8080/gamedata/FigureData.json';
+  " 2>/dev/null || true
 
 PLUGIN_URL="https://git.krews.org/morningstar/nitrowebsockets-for-ms/-/raw/aff34551b54527199401b343a35f16076d1befd5/target/NitroWebsockets-3.1.jar"
 PLUGIN_DIR="/app/arcturus/target/plugins"
