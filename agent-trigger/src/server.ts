@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, unlinkSync, appendFileSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, appendFileSync, mkdirSync, rmSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
 const PORT = parseInt(process.env.HABBO_AGENT_TRIGGER_PORT ?? "3004");
@@ -11,6 +11,8 @@ const PUBLIC_WEBHOOK_URL = process.env.HABBO_PUBLIC_URL ?? "http://localhost:300
 const PROJECT_DIR = (process.env.HABBO_PROJECT_DIR ?? "").trim() || join(import.meta.dir, "../..");
 // Write logs to the mounted project dir so they survive container restarts
 const LOG_FILE = existsSync(PROJECT_DIR) ? join(PROJECT_DIR, "hotel-team.log") : "/tmp/hotel-team.log";
+// Rotate previous session log so each server start begins with a clean file
+try { if (existsSync(LOG_FILE)) renameSync(LOG_FILE, LOG_FILE + ".bak"); } catch { /* non-fatal */ }
 // Max concurrent team runs per server instance (0 = unlimited)
 const MAX_CONCURRENT_RUNS = parseInt(process.env.HABBO_MAX_CONCURRENT_RUNS ?? "0");
 // Auto-kill a run after this many ms (default 20 min)
@@ -715,11 +717,27 @@ function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string,
           if (event.type === "assistant" && event.message?.content) {
             for (const block of event.message.content) {
               if (block.type === "text" && block.text?.trim()) logRoom(roomId, `[think] ${block.text.trim().slice(0, 200)}`);
-              if (block.type === "tool_use") logRoom(roomId, `[tool→] ${block.name} ${JSON.stringify(block.input).slice(0, 150)}`);
+              if (block.type === "tool_use") logRoom(roomId, `[tool→] ${block.name} ${JSON.stringify(block.input).replace(/\s+/g, ' ').slice(0, 150)}`);
             }
-          } else if (event.type === "tool_result") {
-            const content = Array.isArray(event.content) ? event.content.map((c: any) => c.text).join("") : String(event.content ?? "");
-            logRoom(roomId, `[tool←] ${content.slice(0, 150)}`);
+          } else if (event.type === "user" && event.message?.content) {
+            // claude stream-json wraps tool results inside user-turn messages
+            for (const block of event.message.content) {
+              if (block.type !== "tool_result") continue;
+              const raw = block.content;
+              const content = Array.isArray(raw)
+                ? raw.map((c: any) => (typeof c === "string" ? c : c.text ?? "")).join("")
+                : (raw && typeof raw === "object" && "text" in (raw as object))
+                  ? String((raw as any).text ?? "")
+                  : String(raw ?? "");
+              const isErr = block.is_error === true ||
+                /\b(error|unauthorized|forbidden|401|403|timeout|failed)\b/i.test(content);
+              const oneLiner = content.replace(/\s+/g, ' ').trim();
+              if (isErr) {
+                logRoom(roomId, `[tool:err] ${oneLiner.slice(0, 400)}`);
+              } else {
+                logRoom(roomId, `[tool←] ${oneLiner.slice(0, 400)}`);
+              }
+            }
           } else if (event.type === "result") {
             logRoom(roomId, `[done] ${event.result?.slice(0, 200) ?? "complete"}`);
           }
@@ -817,6 +835,26 @@ const server = Bun.serve({
         return Response.json({ ok: true, lines: all.slice(-lines) });
       } catch (e: any) {
         return Response.json({ ok: false, lines: [], error: e.message });
+      }
+    }
+
+    // ── Previous session log download ─────────────────────────────────────────
+    if (url.pathname === "/logs/bak") {
+      try {
+        const bakFile = LOG_FILE + ".bak";
+        if (!existsSync(bakFile)) {
+          return new Response("No previous session log found.", { status: 404, headers: { "Content-Type": "text/plain" } });
+        }
+        const content = readFileSync(bakFile, "utf-8");
+        return new Response(content, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Content-Disposition": `attachment; filename="hotel-team.log.bak"`,
+          },
+        });
+      } catch (e: any) {
+        return new Response(`Error reading log: ${e.message}`, { status: 500, headers: { "Content-Type": "text/plain" } });
       }
     }
 
@@ -1030,9 +1068,12 @@ const server = Bun.serve({
 
       // Filter integrations to only those required by the team's skills so unrelated
       // MCP servers aren't loaded into the agent's context.
+      // Both sides are slug-normalized (lowercase + non-alphanumeric → "-") so display names
+      // like "Habbo MCP" match skill frontmatter values like "habbo-mcp".
+      const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
       const requiredIntegrations = config.team.required_integrations;
       const filteredIntegrations = requiredIntegrations && requiredIntegrations.length > 0
-        ? userIntegrations.filter(i => requiredIntegrations.includes(i.name.toLowerCase()))
+        ? userIntegrations.filter(i => requiredIntegrations.some(r => slugify(r) === slugify(i.name)))
         : userIntegrations;
       if (filteredIntegrations.length > 0) {
         logRoom(roomId, `[trigger] Loaded ${filteredIntegrations.length} integration(s) for user ${portalUserId}: ${filteredIntegrations.map(i => i.name).join(', ')}`);

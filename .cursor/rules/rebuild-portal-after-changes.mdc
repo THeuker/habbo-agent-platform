@@ -1,7 +1,7 @@
 ---
 description: After any portal change (frontend or backend), always build + restart the container
 globs: portal/**/*
-alwaysApply: false
+alwaysApply: true
 ---
 
 # Rebuild & Restart portal after every change

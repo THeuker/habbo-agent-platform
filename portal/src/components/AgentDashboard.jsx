@@ -952,6 +952,7 @@ const LOG_COLORS = {
   '[session]':  'text-violet-400 font-medium',
   '[mcp:ok]':   'text-emerald-400',
   '[mcp:err]':  'text-destructive',
+  '[tool:err]': 'text-destructive font-medium',
   '[tool←]':    'text-emerald-400',
   '[think]':    'text-warning/80',
   '[done]':     'text-green-400 font-semibold',
@@ -1138,7 +1139,7 @@ export function LogPanel({ lines, paused, onTogglePause }) {
                   {intMeta.label}
                 </span>
               )}
-              <span className={logColor(line)}>{rest}</span>
+              <span className={`min-w-0 break-all ${logColor(line)}`}>{rest}</span>
             </div>
           )
         })}

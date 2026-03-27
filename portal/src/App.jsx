@@ -17,7 +17,7 @@ import {
   Edit, Settings, Square, User, ArrowUpCircle, Bell,
   ClipboardList, X, Sun, Moon, Network, Plus,
   Terminal, ChevronDown, ChevronLeft, ChevronRight, Wrench, PanelLeft, MessageSquarePlus, Minus, Waves,
-  Search, Sparkles, LayoutGrid, ExternalLink, Lock,
+  Search, Sparkles, LayoutGrid, ExternalLink, Lock, Download,
 } from 'lucide-react'
 
 // ── Fallback figure types (if API is unavailable) ─────────────────────────
@@ -779,6 +779,8 @@ function Dashboard({ me, setMe }) {
 function DevToolsView({ me }) {
   const [logLines, setLogLines] = useState([])
   const [logPaused, setLogPaused] = useState(false)
+  const [bakDownloading, setBakDownloading] = useState(false)
+  const [bakError, setBakError] = useState(null)
 
   useEffect(() => {
     if (!can(me, 'devtools.access')) return
@@ -795,6 +797,23 @@ function DevToolsView({ me }) {
     return () => clearInterval(id)
   }, [me, logPaused])
 
+  async function downloadBak() {
+    setBakDownloading(true)
+    setBakError(null)
+    try {
+      const res = await fetch('/api/agents/logs/bak', { credentials: 'include' })
+      if (res.status === 404) { setBakError('No previous session log yet.'); return }
+      if (!res.ok) { setBakError('Download failed.'); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'hotel-team.log.bak'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch { setBakError('Download failed.') } finally { setBakDownloading(false) }
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -805,7 +824,21 @@ function DevToolsView({ me }) {
           <h1 className="text-base font-semibold text-foreground">Dev Tools</h1>
           <p className="text-xs text-muted-foreground">Live agent output and system logs</p>
         </div>
-        <span className="ml-auto text-[10px] bg-primary/10 text-primary border border-primary/20 rounded px-1.5 py-0.5 font-medium">Developer</span>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={downloadBak}
+            disabled={bakDownloading}
+            title="Download previous session log (.bak)"
+            className="flex items-center gap-1 text-xs px-2 py-0.5 rounded border transition-colors text-muted-foreground border-border hover:text-foreground disabled:opacity-50"
+          >
+            {bakDownloading
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <Download className="w-3 h-3" />}
+            Previous log
+          </button>
+          {bakError && <span className="text-xs text-destructive">{bakError}</span>}
+          <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 rounded px-1.5 py-0.5 font-medium">Developer</span>
+        </div>
       </div>
       <LogPanel lines={logLines} paused={logPaused} onTogglePause={() => setLogPaused(p => !p)} />
     </div>
@@ -906,7 +939,7 @@ function HomeTab({ me, hotelStatus, onNavigate }) {
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <h2 className="text-2xl font-semibold tracking-tight text-foreground">Welcome back, {me.username}</h2>
+                <h2 className="text-lg sm:text-2xl font-semibold tracking-tight text-foreground truncate">Welcome back, {me.username}</h2>
                 <p className="text-sm text-muted-foreground mt-1">
                   Manage your hotel bots, agent teams, and MCP connections.
                 </p>
@@ -1017,7 +1050,7 @@ function StatusCard({ label, value, icon: Icon, valueClassName = '', onClick, hi
           <Icon className="w-3.5 h-3.5 text-muted-foreground" />
         </div>
       </div>
-      <p className={`text-2xl font-semibold tracking-tight ${isClickable ? 'text-foreground' : 'text-muted-foreground'} ${valueClassName}`}>{value}</p>
+      <p className={`text-base sm:text-2xl font-semibold tracking-tight truncate ${isClickable ? 'text-foreground' : 'text-muted-foreground'} ${valueClassName}`}>{value}</p>
       {hint && <p className="text-xs text-primary mt-1">{hint}</p>}
     </div>
   )

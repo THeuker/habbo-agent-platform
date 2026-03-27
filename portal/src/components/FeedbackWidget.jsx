@@ -145,7 +145,7 @@ export function FeedbackWidget() {
   const card = open ? (
     <div
       ref={cardRef}
-      className="fixed bottom-20 right-6 z-50 w-72 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
+      className="fixed bottom-28 right-4 z-50 md:bottom-20 md:right-6 w-72 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
       style={{ animation: 'fadeSlideUp 0.18s ease-out' }}
     >
       {done ? (
@@ -188,7 +188,7 @@ export function FeedbackWidget() {
       {/* Floating trigger */}
       <button
         onClick={() => { setOpen(v => !v); if (!open) reset() }}
-        className="fixed bottom-6 right-6 z-40 flex items-center gap-1.5 h-9 px-4 rounded-full bg-primary text-primary-foreground text-xs font-medium shadow-lg hover:bg-primary/90 transition-all duration-150 hover:shadow-xl"
+        className="fixed bottom-16 right-4 z-40 md:bottom-6 md:right-6 flex items-center gap-1.5 h-9 px-4 rounded-full bg-primary text-primary-foreground text-xs font-medium shadow-lg hover:bg-primary/90 transition-all duration-150 hover:shadow-xl"
         title="Give feedback"
       >
         <MessageSquarePlus className="w-3.5 h-3.5" />

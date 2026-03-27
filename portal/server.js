@@ -3008,7 +3008,7 @@ app.post('/api/my/teams/:id/stop', authRequired, async (req, res) => {
   } catch (err) { res.status(502).json({ error: 'Agent trigger unavailable: ' + err.message }); }
 });
 
-app.get('/api/agents/logs', authRequired, async (req, res) => {
+app.get('/api/agents/logs', authRequired, permRequired('devtools.access'), async (req, res) => {
   try {
     const lines = Math.min(parseInt(req.query.lines ?? '150'), 500);
     const r = await fetch(`${AGENT_TRIGGER_URL}/logs?lines=${lines}`);
@@ -3020,6 +3020,18 @@ app.get('/api/agents/logs', authRequired, async (req, res) => {
     }
     res.json(data);
   } catch (err) { res.json({ ok: false, lines: [], error: 'Agent trigger unavailable' }); }
+});
+
+app.get('/api/agents/logs/bak', authRequired, permRequired('devtools.access'), async (req, res) => {
+  try {
+    const r = await fetch(`${AGENT_TRIGGER_URL}/logs/bak`);
+    if (r.status === 404) return res.status(404).json({ error: 'No previous session log found.' });
+    if (!r.ok) return res.status(502).json({ error: 'Agent trigger unavailable' });
+    const text = await r.text();
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="hotel-team.log.bak"');
+    res.send(text);
+  } catch (err) { res.status(502).json({ error: 'Agent trigger unavailable' }); }
 });
 
 // ── Agent Flows ─────────────────────────────────────────────────────────────
@@ -3629,13 +3641,10 @@ function parseSkillFile(slug, raw) {
   };
 }
 
-let _skillsCatalogCache = null;
-
-/** Load all skills from the skills directory — cached in memory after first load */
+/** Load all skills from the skills directory — reads from disk each call so updates are live */
 function loadSkillsCatalog() {
-  if (_skillsCatalogCache) return _skillsCatalogCache;
-  if (!existsSync(SKILLS_DIR)) { _skillsCatalogCache = []; return _skillsCatalogCache; }
-  _skillsCatalogCache = readdirSync(SKILLS_DIR, { withFileTypes: true })
+  if (!existsSync(SKILLS_DIR)) return [];
+  return readdirSync(SKILLS_DIR, { withFileTypes: true })
     .filter(d => d.isDirectory())
     .map(d => {
       const skillFile = path.join(SKILLS_DIR, d.name, 'SKILL.md');
@@ -3646,11 +3655,7 @@ function loadSkillsCatalog() {
     })
     .filter(Boolean)
     .sort((a, b) => a.title.localeCompare(b.title));
-  return _skillsCatalogCache;
 }
-
-/** Bust the skills cache — call when skills directory changes */
-function bustSkillsCache() { _skillsCatalogCache = null; }
 
 /** Convert an array of skill slugs to a bullet-point capabilities string for agent-trigger */
 function skillSlugsToCapabilities(slugs) {
@@ -3662,6 +3667,11 @@ function skillSlugsToCapabilities(slugs) {
       return skill ? `- ${skill.title}` : `- ${slug}`;
     })
     .join('\n');
+}
+
+/** Collect unique required integrations from a list of already-resolved members */
+function collectRequiredIntegrations(resolvedMembers) {
+  return [...new Set(resolvedMembers.flatMap(m => m.required_integrations || []))];
 }
 
 /** Resolve skill slugs in capabilities field, injecting skill bodies into prompt */
@@ -3726,8 +3736,7 @@ app.get('/api/internal/user-teams/:id/config', requireInternalSecret, async (req
     );
     // Resolve skill slugs → capabilities bullets + inject skill bodies into prompt
     const members = rawMembers.map(resolvePersonaSkills);
-    // Collect unique required integrations across all team members' skills
-    const required_integrations = [...new Set(members.flatMap(m => m.required_integrations || []))];
+    const required_integrations = collectRequiredIntegrations(members);
     res.json({ ok: true, team: { ...team, required_integrations }, members, flow: null, templates: [] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4034,8 +4043,7 @@ app.get('/api/internal/teams/:id/config', requireInternalSecret, async (req, res
     );
     // Resolve skill slugs → capabilities bullets + inject skill bodies into prompt
     const members = rawMembers.map(resolvePersonaSkills);
-    // Collect unique required integrations across all team members' skills
-    const required_integrations = [...new Set(members.flatMap(m => m.required_integrations || []))];
+    const required_integrations = collectRequiredIntegrations(members);
     res.json({ ok: true, team: { ...team, required_integrations }, members, flow, templates });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

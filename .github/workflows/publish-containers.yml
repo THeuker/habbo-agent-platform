@@ -184,7 +184,7 @@ jobs:
       - name: Build and push agent-portal image
         uses: docker/build-push-action@v6
         with:
-          context: ./portal
+          context: .
           file: ./portal/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64

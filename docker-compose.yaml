@@ -73,7 +73,8 @@ services:
   agent-portal:
     container_name: agent-portal
     build:
-      context: ./portal
+      context: .
+      dockerfile: portal/Dockerfile
     environment:
       - PORT=3000
       - HABBO_BASE_URL=${HABBO_PORTAL_BASE_URL:-http://127.0.0.1:1080}
@@ -206,6 +207,7 @@ services:
       - HABBO_HOOK_ENABLED=false
       - PORTAL_URL=${HOTEL_PORTAL_INTERNAL_URL:-http://agent-portal:3000}
       - PORTAL_INTERNAL_SECRET=${HOTEL_PORTAL_INTERNAL_SECRET:-change-this-secret}
+      - SHELL=/bin/bash
       # narrator_verbosity (3–10) is stored per team in the database, not here
     volumes:
       - .:/project:ro
