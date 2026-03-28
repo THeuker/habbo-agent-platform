@@ -2526,20 +2526,38 @@ app.delete('/api/hotel/bots/:id', authRequired, async (req, res) => {
     botRow = b || null;
   }
 
+  let rconError = null;
+  let rconResult = null;
   if (botRow) {
     try {
-      await rconCommand('deletebot', { bot_id: botRow.id });
+      rconResult = await rconCommand('deletebot', { bot_id: botRow.id });
+      console.log(`[delete bot ${botRow.id}] RCON deletebot response:`, JSON.stringify(rconResult));
       // deletebot RCON removes the bot from its room (if loaded) and deletes the
       // bots DB row. Manual DELETE below is a safety net in case RCON succeeded
       // but the bot was in an unloaded room (not found in getActiveRooms).
-    } catch { /* RCON unavailable — emulator down; proceed to DB cleanup */ }
+    } catch (e) {
+      rconError = e?.message || String(e);
+      console.error(`[delete bot ${botRow.id}] RCON deletebot failed: ${rconError}`);
+    }
     await db.execute('DELETE FROM bots WHERE id=?', [botRow.id]);
   }
 
   await db.execute('DELETE FROM ai_agent_configs WHERE id=?', [configId]);
-  res.json({ ok: true });
+  res.json({ ok: true, rconResult, rconError, botRowId: botRow?.id ?? null });
 });
 
+
+// Quick RCON connectivity check — admin only, no side effects.
+// Uses roomlivebots with a bogus room_id=0; the emulator rejects it cleanly with
+// a proper JSON error, which proves the full request/response cycle works.
+app.get('/api/rcon-status', authRequired, async (_req, res) => {
+  try {
+    const result = await rconCommand('roomlivebots', { room_id: 0 });
+    res.json({ ok: true, host: RCON_HOST, port: RCON_PORT, response: result });
+  } catch (e) {
+    res.json({ ok: false, host: RCON_HOST, port: RCON_PORT, error: e?.message || String(e) });
+  }
+});
 
 const FIGURE_TYPES = {
   // Male figures
