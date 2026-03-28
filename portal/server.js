@@ -2498,14 +2498,29 @@ app.delete('/api/hotel/bots/:id', authRequired, async (req, res) => {
   );
   if (!config) return res.status(404).json({ error: 'Not found' });
 
-  const bot = await findLiveBot(config, habboUserId);
-  if (bot) {
+  // Resolve the bots row by bot_id first, then fall back to name+user —
+  // do NOT filter by room_id here: the bot may be offline (room_id=0) which
+  // previously caused findLiveBot to return null, leaving the bots row behind.
+  let botRow = null;
+  if (config.bot_id) {
+    const [[b]] = await db.execute('SELECT id FROM bots WHERE id=? AND user_id=?', [config.bot_id, habboUserId]);
+    botRow = b || null;
+  }
+  if (!botRow) {
+    const [[b]] = await db.execute(
+      `SELECT id FROM bots WHERE user_id=? AND LOWER(TRIM(name))=LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
+      [habboUserId, config.name]
+    );
+    botRow = b || null;
+  }
+
+  if (botRow) {
     try {
-      await rconCommand('deletebot', { bot_id: bot.id });
+      await rconCommand('deletebot', { bot_id: botRow.id });
     } catch { /* RCON unavailable — bot already gone or emulator down */ }
-    // Always remove the DB row so sync cannot reimport this bot.
-    // DeleteBot RCON only sets room_id=0; it does not delete the row.
-    await db.execute('DELETE FROM bots WHERE id=?', [bot.id]);
+    // Always remove the DB row regardless of RCON outcome.
+    // deletebot RCON only sets room_id=0; it does not delete the row.
+    await db.execute('DELETE FROM bots WHERE id=?', [botRow.id]);
   }
 
   await db.execute('DELETE FROM ai_agent_configs WHERE id=?', [configId]);
