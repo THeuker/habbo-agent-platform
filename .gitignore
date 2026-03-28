@@ -17,3 +17,4 @@ emulator/nitro/nitro-assets/
 
 **/supervisord.pid
 portal-dist/
+portal/vite.config.js.timestamp-*
