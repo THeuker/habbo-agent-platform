@@ -1391,7 +1391,7 @@ function BotsTab({ figureTypes }) {
           <p className="text-xs text-muted-foreground mt-0.5 max-w-lg">
             These are your <span className="text-foreground">Habbo hotel bots</span> — physical avatars that walk around rooms in the hotel.
             Editing a bot updates it <span className="text-foreground">live in the hotel</span> (name, motto &amp; appearance change instantly).
-            <span className="ml-1 opacity-80">Agents (under <em>My Agents</em>) are the AI brains that can be assigned to control these bots.</span>
+            <span className="ml-1 opacity-80">Deleting a bot here only removes it from the portal — the bot stays in your hotel inventory. Sync to re-import it. To permanently destroy a bot, use the hotel admin panel.</span>
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -1427,9 +1427,9 @@ function BotsTab({ figureTypes }) {
           <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
             <Bot className="w-5 h-5 text-muted-foreground" />
           </div>
-          <p className="text-sm font-medium text-foreground">No bots deployed yet</p>
+          <p className="text-sm font-medium text-foreground">No bots imported yet</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Bots are managed by hotel administrators.
+            Use <span className="font-medium text-foreground">Sync bots</span> to import bots from your hotel inventory.
           </p>
         </div>
       ) : (

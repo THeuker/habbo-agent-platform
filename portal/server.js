@@ -2148,7 +2148,8 @@ app.get('/api/hotel/rooms', authRequired, async (req, res) => {
 
 app.get('/api/hotel/bots', authRequired, async (req, res) => {
   const habboUserId = req.user.habbo_user_id;
-  // Remove portal rows that no longer have a matching `bots` row for this user (sold/deleted/renamed in hotel)
+
+  // Remove portal configs that no longer have a matching `bots` row for this user (sold/deleted/renamed in hotel)
   await db.execute(
     `DELETE a FROM ai_agent_configs a
      WHERE a.user_id = ?
@@ -2223,11 +2224,14 @@ app.get('/api/hotel/bots', authRequired, async (req, res) => {
 
   // MySQL + MCP list_bots both read `bots` — rows can be stale (room_id set while room is unloaded).
   // Ask the emulator which bot IDs are actually in memory for each room (RCON roomlivebots).
+  // Name fallback is ONLY used for configs without a bot_id. When bot_id IS set but the bot
+  // is not in liveByBotId it is simply in inventory (room_id=0) — using hotel-wide name lookup
+  // would incorrectly match another user's bot with the same name.
   const roomIdsToVerify = new Set();
   for (const r of rows) {
     let cand = null;
     if (r.bot_id && liveByBotId[r.bot_id]) cand = liveByBotId[r.bot_id];
-    else cand = liveByName[r.name?.toLowerCase()] || null;
+    else if (!r.bot_id) cand = liveByName[r.name?.toLowerCase()] || null;
     if (cand && cand.room_id > 0) roomIdsToVerify.add(cand.room_id);
   }
   const roomLiveSets = new Map();
@@ -2260,7 +2264,7 @@ app.get('/api/hotel/bots', authRequired, async (req, res) => {
   const bots = rows.map((r) => {
     let cand = null;
     if (r.bot_id && liveByBotId[r.bot_id]) cand = liveByBotId[r.bot_id];
-    else cand = liveByName[r.name?.toLowerCase()] || null;
+    else if (!r.bot_id) cand = liveByName[r.name?.toLowerCase()] || null;
     let live = null;
     if (cand && cand.room_id > 0) {
       const set = roomLiveSets.get(cand.room_id);
@@ -2304,6 +2308,7 @@ app.post('/api/hotel/bots/sync', authRequired, async (req, res) => {
       [habboUserId]
     );
 
+
     const ownedBotIds = new Set(ownedBots.map(b => b.id));
     const ownedNamesLower = new Set(
       ownedBots.map(b => b.name?.toLowerCase()).filter(Boolean)
@@ -2341,9 +2346,9 @@ app.post('/api/hotel/bots/sync', authRequired, async (req, res) => {
       byName.set(key, b);
     }
 
-    // Build a lookup of existing configs by lowercased name for figure/motto refresh
+    // Build a lookup of existing configs by lowercased name for figure/motto/bot_id refresh
     const [existingConfigs] = await db.execute(
-      'SELECT id, LOWER(name) AS name, figure, motto FROM ai_agent_configs WHERE user_id = ?',
+      'SELECT id, LOWER(name) AS name, figure, motto, bot_id FROM ai_agent_configs WHERE user_id = ?',
       [habboUserId]
     );
     const configByName = new Map(existingConfigs.map(c => [c.name, c]));
@@ -2355,13 +2360,17 @@ app.post('/api/hotel/bots/sync', authRequired, async (req, res) => {
       const key = b.name.toLowerCase();
       const existing = configByName.get(key);
       if (existing) {
-        // Refresh figure and motto from the live bots table if they differ
+        // Refresh figure, motto, and bot_id from the live bots table if they differ.
+        // bot_id may be missing on configs created before migration 002 or after a
+        // manual portal-only delete (config removed but bots row kept).
         const newFigure = b.figure || existing.figure;
         const newMotto  = b.motto  ?? existing.motto;
-        if (newFigure !== existing.figure || newMotto !== existing.motto) {
+        const newBotId  = b.id;
+        const botIdChanged = existing.bot_id == null || existing.bot_id !== newBotId;
+        if (newFigure !== existing.figure || newMotto !== existing.motto || botIdChanged) {
           await db.execute(
-            'UPDATE ai_agent_configs SET figure=?, motto=? WHERE id=?',
-            [newFigure, newMotto, existing.id]
+            'UPDATE ai_agent_configs SET figure=?, motto=?, bot_id=? WHERE id=?',
+            [newFigure, newMotto, newBotId, existing.id]
           );
           updated++;
         } else {
@@ -2494,14 +2503,16 @@ app.delete('/api/hotel/bots/:id', authRequired, async (req, res) => {
   const habboUserId = req.user.habbo_user_id;
 
   const [[config]] = await db.execute(
-    'SELECT * FROM ai_agent_configs WHERE id=? AND user_id=?',
+    'SELECT id, bot_id, name FROM ai_agent_configs WHERE id=? AND user_id=?',
     [configId, habboUserId]
   );
   if (!config) return res.status(404).json({ error: 'Not found' });
 
-  // Resolve the bots row by bot_id first, then fall back to name+user —
-  // do NOT filter by room_id here: the bot may be offline (room_id=0) which
-  // previously caused findLiveBot to return null, leaving the bots row behind.
+  // Resolve the bots row by bot_id first, then fall back to name+user.
+  // Do NOT filter by type or room_id — bots may be 'generic'/'visitor_log'/etc
+  // and may be offline (room_id=0). The old findLiveBot filtered type='ai_agent'
+  // which caused it to silently return null for non-ai_agent bots, leaving the
+  // hotel bot alive even after clicking delete.
   let botRow = null;
   if (config.bot_id) {
     const [[b]] = await db.execute('SELECT id FROM bots WHERE id=? AND user_id=?', [config.bot_id, habboUserId]);
@@ -2518,9 +2529,10 @@ app.delete('/api/hotel/bots/:id', authRequired, async (req, res) => {
   if (botRow) {
     try {
       await rconCommand('deletebot', { bot_id: botRow.id });
-    } catch { /* RCON unavailable — bot already gone or emulator down */ }
-    // Always remove the DB row regardless of RCON outcome.
-    // deletebot RCON only sets room_id=0; it does not delete the row.
+      // deletebot RCON removes the bot from its room (if loaded) and deletes the
+      // bots DB row. Manual DELETE below is a safety net in case RCON succeeded
+      // but the bot was in an unloaded room (not found in getActiveRooms).
+    } catch { /* RCON unavailable — emulator down; proceed to DB cleanup */ }
     await db.execute('DELETE FROM bots WHERE id=?', [botRow.id]);
   }
 
