@@ -31,15 +31,51 @@ const FALLBACK_FIGURE_TYPES = {
   'agent-f':    { gender: 'F', figure: 'hd-620-12.ch-3005-64.lg-3006-96.sh-905-91.ha-3426-110.hr-3531-61.he-1601-0.ea-3169-0' },
 }
 
-// ── Build stamp (vite `define`) — proves this JS bundle is what the browser loaded ──
+// ── Version footer + update detection ─────────────────────────────────────────
+
+const BUNDLED_VERSION = import.meta.env.VITE_APP_VERSION || 'dev'
+
+function useVersionCheck() {
+  const [updateAvailable, setUpdateAvailable] = useState(false)
+
+  useEffect(() => {
+    async function check() {
+      try {
+        const res = await fetch('/version.json', { cache: 'no-store' })
+        if (!res.ok) return
+        const { version } = await res.json()
+        if (version && version !== BUNDLED_VERSION) setUpdateAvailable(true)
+      } catch { /* network unavailable — ignore */ }
+    }
+
+    check()
+    const onFocus = () => check()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
+
+  return updateAvailable
+}
 
 function UiBuildFooter() {
-  const stamp = import.meta.env.VITE_UI_BUILD_STAMP || 'dev'
+  const updateAvailable = useVersionCheck()
   return (
-    <footer className="border-t border-border py-2 px-4 text-center text-[10px] text-muted-foreground shrink-0">
-      UI bundle <code className="text-[9px] bg-muted px-1 py-0.5 rounded">{stamp}</code>
-      {' — '}if this never changes after deploy, hard-refresh or clear site cache
-    </footer>
+    <>
+      {updateAvailable && (
+        <div className="shrink-0 bg-primary text-primary-foreground text-[11px] font-medium py-1.5 px-4 flex items-center justify-center gap-3">
+          <span>Nieuwe versie beschikbaar</span>
+          <button
+            onClick={() => window.location.reload()}
+            className="underline underline-offset-2 font-semibold hover:opacity-80"
+          >
+            Vernieuwen
+          </button>
+        </div>
+      )}
+      <footer className="border-t border-border py-2 px-4 text-center text-[10px] text-muted-foreground shrink-0">
+        v{BUNDLED_VERSION}
+      </footer>
+    </>
   )
 }
 

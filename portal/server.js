@@ -1219,6 +1219,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+
 app.get('/api/hotel/status', async (_req, res) => {
   const socket = await checkSocketOnline(HABBO_HEALTHCHECK_URL, 2000);
   res.json({
