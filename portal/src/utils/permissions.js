@@ -45,10 +45,10 @@ export const PERMISSIONS = {
   // ── Marketplace ────────────────────────────────────────────────────────────
   // Who can browse marketplace teams, skills, and personas
   'marketplace.browse':  { minTier: 'basic', requiresDev: false, description: 'Browse marketplace content' },
-  // Who can install a marketplace team into their own account
-  'marketplace.install':   { minTier: 'pro', requiresDev: false, description: 'Install marketplace teams' },
-  // Who can uninstall (remove) a previously installed marketplace team from their account
-  'marketplace.uninstall': { minTier: 'pro', requiresDev: false, description: 'Uninstall marketplace teams from own account' },
+  // Who can fork marketplace templates into their own workspace
+  'marketplace.install':   { minTier: 'pro', requiresDev: false, description: 'Fork marketplace teams into own workspace' },
+  // Who can remove marketplace-derived forks from their account
+  'marketplace.uninstall': { minTier: 'pro', requiresDev: false, description: 'Remove marketplace forks from own account' },
   // Who can create/edit/delete marketplace templates (developer-only authoring)
   'marketplace.manage':    { minTier: 'pro', requiresDev: true,  description: 'Author and manage marketplace templates' },
 

@@ -4,20 +4,22 @@ import { createPortal } from 'react-dom'
 import { Provider as TooltipProvider } from '@radix-ui/react-tooltip'
 import { HabboFigure } from './components/HabboFigure'
 import { AgentDashboard, AccountView, LogPanel, OnlineView } from './components/AgentDashboard'
+import { ReportsView } from './components/ReportsView'
 import { FeedbackWidget, FeedbackView } from './components/FeedbackWidget'
 import { MarketplaceView } from './components/MarketplaceView'
 import { useTheme } from './ThemeContext'
+import { HotelProvider, useHotel } from './HotelContext'
 import { api } from './utils/api'
 import { useToast } from './ToastContext'
 import { can } from './utils/permissions'
 import {
   Home, Bot, Key, Users, LogOut, Hotel, ShoppingBag,
-  Eye, EyeOff, Loader2, AlertCircle, CheckCircle,
+  Eye, EyeOff, Loader2, AlertCircle, AlertTriangle, CheckCircle,
   Wifi, WifiOff, Copy, Check, Trash2, RefreshCw,
-  Edit, Settings, Square, User, ArrowUpCircle, Bell,
+  Edit, Settings, Square, ArrowUpCircle, Bell,
   ClipboardList, X, Sun, Moon, Network, Plus,
   Terminal, ChevronDown, ChevronLeft, ChevronRight, Wrench, PanelLeft, MessageSquarePlus, Minus, Waves,
-  Search, Sparkles, LayoutGrid, ExternalLink, Lock, Download,
+  Search, Sparkles, LayoutGrid, ExternalLink, Lock, Download, FileText,
 } from 'lucide-react'
 
 // ── Fallback figure types (if API is unavailable) ─────────────────────────
@@ -128,7 +130,7 @@ function AuthPage({ onLogin }) {
   const [message, setMessage] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
-  const [registerForm, setRegisterForm] = useState({ email: '', username: '', password: '' })
+  const [registerForm, setRegisterForm] = useState({ email: '', username: '', password: '', hotel_enabled: true })
   const [loginForm, setLoginForm] = useState({ login: '', password: '' })
   const [forgotForm, setForgotForm] = useState({ email: '' })
   const [resetForm, setResetForm] = useState({
@@ -318,6 +320,32 @@ function AuthPage({ onLogin }) {
                     onChange={v => setRegisterForm(s => ({ ...s, password: v }))}
                     showToggle onToggle={() => setShowPassword(p => !p)} showingPassword={showPassword}
                   />
+
+                  {/* Workspace type selector */}
+                  <div className="space-y-1.5 pt-1">
+                    <p className="text-xs text-muted-foreground font-medium">Workspace type</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { value: false, label: 'Team workspace', desc: 'Manage AI teams, track results and workflows.' },
+                        { value: true, label: '+ Virtual office', desc: 'Your agents get hotel avatars and live in virtual rooms.' },
+                      ].map(({ value, label, desc }) => (
+                        <button
+                          key={String(value)}
+                          type="button"
+                          onClick={() => setRegisterForm(s => ({ ...s, hotel_enabled: value }))}
+                          className={`text-left p-3 rounded-xl border text-xs transition-all ${
+                            registerForm.hotel_enabled === value
+                              ? 'border-primary bg-primary/5 text-foreground'
+                              : 'border-border text-muted-foreground hover:border-border/80 hover:bg-secondary/40'
+                          }`}
+                        >
+                          <p className="font-semibold mb-1">{label}</p>
+                          <p className="leading-snug">{desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <AuthButton busy={busy} label="Create Account" busyLabel="Creating account..." />
                 </form>
               )}
@@ -326,7 +354,7 @@ function AuthPage({ onLogin }) {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-4">
-          Habbo Hotel Agent Platform
+          ThePixelOffice — AI Team Platform
         </p>
       </div>
 
@@ -409,7 +437,16 @@ function AuthButton({ busy, label, busyLabel }) {
 // ── Dashboard ─────────────────────────────────────────────────────────────
 
 function Dashboard({ me, setMe }) {
+  return (
+    <HotelProvider me={me}>
+      <DashboardInner me={me} setMe={setMe} />
+    </HotelProvider>
+  )
+}
+
+function DashboardInner({ me, setMe }) {
   const { theme, toggleTheme, cycleTheme, setThemeByName } = useTheme()
+  const { habboConnected, hotelStatus } = useHotel()
   const [activeTab, setActiveTab] = useState('home')
   const [activeTeam, setActiveTeam] = useState(null)
   const [stopping, setStopping] = useState(false)
@@ -475,7 +512,6 @@ function Dashboard({ me, setMe }) {
     catch { /* ignore */ }
     finally { setStopping(false) }
   }
-  const [hotelStatus, setHotelStatus] = useState({ loading: true, socket_online: false, reason: '', checked_url: '' })
   const [figureTypes, setFigureTypes] = useState(FALLBACK_FIGURE_TYPES)
 
   // Load figure types on mount
@@ -483,24 +519,6 @@ function Dashboard({ me, setMe }) {
     api('/api/figure-types')
       .then(d => { if (d.figureTypes) setFigureTypes(d.figureTypes) })
       .catch(() => {})
-  }, [])
-
-  // Hotel status polling
-  useEffect(() => {
-    let mounted = true
-    async function loadStatus() {
-      try {
-        const data = await api('/api/hotel/status')
-        if (!mounted) return
-        setHotelStatus({ loading: false, socket_online: !!data.socket_online, reason: data.reason || '', checked_url: data.checked_url || '' })
-      } catch (err) {
-        if (!mounted) return
-        setHotelStatus({ loading: false, socket_online: false, reason: err.message, checked_url: '' })
-      }
-    }
-    loadStatus()
-    const id = setInterval(loadStatus, 5000)
-    return () => { mounted = false; clearInterval(id) }
   }, [])
 
   async function handleLogout() {
@@ -524,10 +542,10 @@ function Dashboard({ me, setMe }) {
 
   const tabs = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'agents', label: 'My Agents', icon: Bot },
+    { id: 'agents', label: 'Teams', icon: Bot },
     { id: 'marketplace', label: 'Marketplace', icon: ShoppingBag },
-    { id: 'bots', label: 'Bots', icon: Users },
     { id: 'integrations', label: 'Integrations', icon: Network },
+    { id: 'reports', label: 'Reports', icon: FileText },
     ...(can(me, 'admin.requests') ? [{ id: 'requests', label: 'Requests', icon: ClipboardList, badge: pendingRequestCount }] : []),
   ]
 
@@ -623,31 +641,35 @@ function Dashboard({ me, setMe }) {
               </div>
             )}
 
-            {/* Hotel status — click to open Online page */}
-            <button
-              onClick={() => setActiveTab('online')}
-              className={`flex items-center gap-1.5 text-xs transition-colors hover:text-foreground ${activeTab === 'online' ? 'text-foreground' : 'text-muted-foreground'}`}
-              title="View online agents"
-            >
-              {hotelStatus.loading ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : hotelStatus.socket_online ? (
-                <Wifi className="w-3 h-3 text-success" />
-              ) : (
-                <WifiOff className="w-3 h-3 text-muted-foreground" />
-              )}
-              <span className="hidden sm:inline">{hotelStatus.loading ? 'Checking...' : hotelStatus.socket_online ? 'Online' : 'Offline'}</span>
-            </button>
+            {/* Hotel status — only shown when hotel integration is active */}
+            {habboConnected && (
+              <button
+                onClick={() => setActiveTab('online')}
+                className={`flex items-center gap-1.5 text-xs transition-colors hover:text-foreground ${activeTab === 'online' ? 'text-foreground' : 'text-muted-foreground'}`}
+                title="View online agents"
+              >
+                {hotelStatus.loading ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : hotelStatus.socket_online ? (
+                  <Wifi className="w-3 h-3 text-success" />
+                ) : (
+                  <WifiOff className="w-3 h-3 text-muted-foreground" />
+                )}
+                <span className="hidden sm:inline">{hotelStatus.loading ? 'Checking...' : hotelStatus.socket_online ? 'Online' : 'Offline'}</span>
+              </button>
+            )}
 
-            {/* Join hotel button */}
-            <button
-              onClick={handleJoinHotel}
-              disabled={busy || !hotelStatus.socket_online}
-              className="flex items-center gap-1.5 h-8 px-3 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
-            >
-              <Hotel className="w-3 h-3" />
-              <span className="hidden sm:inline">Join Hotel</span>
-            </button>
+            {/* Join hotel button — only when hotel integration is active */}
+            {habboConnected && (
+              <button
+                onClick={handleJoinHotel}
+                disabled={busy || !hotelStatus.socket_online}
+                className="flex items-center gap-1.5 h-8 px-3 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                <Hotel className="w-3 h-3" />
+                <span className="hidden sm:inline">Join Hotel</span>
+              </button>
+            )}
 
             {/* User figure */}
             {me.figure && <HabboFigure figure={me.figure} size="sm" animate={false} className="hidden sm:block flex-shrink-0" />}
@@ -760,7 +782,7 @@ function Dashboard({ me, setMe }) {
         <main className="flex-1 overflow-y-auto">
           <div key={activeTab} className="animate-fade-up">
           {activeTab === 'home' && (
-            <HomeTab me={me} hotelStatus={hotelStatus} onNavigate={setActiveTab} />
+            <HomeTab me={me} onNavigate={setActiveTab} />
           )}
           {activeTab === 'tiers' && (
             <TiersTab me={me} onNavigate={setActiveTab} />
@@ -780,11 +802,13 @@ function Dashboard({ me, setMe }) {
           {activeTab === 'account' && (
             <AccountView me={me} onTokenChange={handleTokenChange} onKeyUpdated={refreshMe} />
           )}
-          {activeTab === 'bots' && (
-            <BotsTab figureTypes={figureTypes} />
-          )}
           {activeTab === 'integrations' && (
-            <IntegrationsTab />
+            <IntegrationsTab me={me} hotelStatus={hotelStatus} onHotelToggle={() => { refreshMe(); }} figureTypes={figureTypes} />
+          )}
+          {activeTab === 'reports' && (
+            <div className="max-w-5xl mx-auto px-4 py-6">
+              <ReportsView />
+            </div>
           )}
           {activeTab === 'online' && (
             <div className="max-w-5xl mx-auto px-4 py-6">
@@ -887,15 +911,17 @@ const QUICK_LINKS = [
   { label: 'My Agents',    description: 'Manage your agent teams',      icon: Bot,         tab: 'agents'       },
   { label: 'My Teams',     description: 'View and configure teams',      icon: Users,       tab: 'agents'       },
   { label: 'Marketplace',  description: 'Browse and install teams',      icon: ShoppingBag, tab: 'marketplace'  },
-  { label: 'Bots',         description: 'Manage hotel bot personas',     icon: User,        tab: 'bots'         },
+  { label: 'Virtual office', description: 'Habbo bots & hotel connection', icon: Hotel,     tab: 'integrations' },
   { label: 'Integrations', description: 'Connect external services',     icon: Network,     tab: 'integrations' },
   { label: 'Settings',     description: 'Account and API key settings',  icon: Settings,    tab: 'account'      },
 ]
 
-function HomeTab({ me, hotelStatus, onNavigate }) {
+function HomeTab({ me, onNavigate }) {
+  const { hotelStatus, habboConnected } = useHotel()
   const activeTier = me?.ai_tier || 'basic'
   const [upgradeRequest, setUpgradeRequest] = useState(null)
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
+  const [teamWarning, setTeamWarning] = useState(null) // { teamName } | null
 
   useEffect(() => {
     if (activeTier !== 'basic') return
@@ -903,6 +929,22 @@ function HomeTab({ me, hotelStatus, onNavigate }) {
       .then(d => setUpgradeRequest(d.request || null))
       .catch(() => {})
   }, [activeTier])
+
+  useEffect(() => {
+    if (activeTier === 'basic' || !habboConnected) {
+      setTeamWarning(null)
+      return
+    }
+    Promise.all([api('/api/my/teams'), api('/api/agents/bots?mine=true')])
+      .then(([td, bd]) => {
+        const botNames = new Set((bd.bots || []).map(b => b.name?.toLowerCase()).filter(Boolean))
+        const bad = (td.teams || []).find(t =>
+          (t.members || []).some(m => !m.bot_name?.trim() || !botNames.has(m.bot_name.toLowerCase()))
+        )
+        setTeamWarning(bad ? { teamName: bad.name } : null)
+      })
+      .catch(() => {})
+  }, [activeTier, habboConnected])
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
@@ -1013,9 +1055,27 @@ function HomeTab({ me, hotelStatus, onNavigate }) {
             )}
 
             {allDone && activeTier !== 'basic' && (
-              <div className="mt-4 pt-4 border-t border-border flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
-                <p className="text-xs text-success font-medium">All set — your agents are ready to deploy.</p>
+              <div className="mt-4 pt-4 border-t border-border" onClick={e => e.stopPropagation()}>
+                {teamWarning ? (
+                  <button
+                    onClick={() => onNavigate('agents')}
+                    className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 bg-warning/10 border border-warning/20 hover:bg-warning/15 transition-colors text-left"
+                  >
+                    <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-warning">Team needs attention</p>
+                      <p className="text-xs text-warning/70 truncate">
+                        <span className="font-medium">"{teamWarning.teamName}"</span> has agents missing a linked bot
+                      </p>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-warning/60 flex-shrink-0" />
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
+                    <p className="text-xs text-success font-medium">All set — your agents are ready to deploy.</p>
+                  </div>
+                )}
               </div>
             )}
           </button>
@@ -1282,6 +1342,7 @@ function BotsTab({ figureTypes }) {
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState(null)
+  const [lastSynced, setLastSynced] = useState(null)
   const [editingBotId, setEditingBotId] = useState(null)
   const [editForm, setEditForm] = useState({})
   const [botBusy, setBotBusy] = useState({})
@@ -1290,8 +1351,8 @@ function BotsTab({ figureTypes }) {
   useEscapeKey(() => { if (confirmDelete) { setConfirmDelete(null) } else { cancelEditBot() } }, !!(editingBotId || confirmDelete))
   const [botsMeta, setBotsMeta] = useState(null)
 
-  const fetchBots = useCallback(async () => {
-    setLoading(true)
+  const fetchBots = useCallback(async ({ showLoading = false } = {}) => {
+    if (showLoading) setLoading(true)
     try {
       const d = await api('/api/hotel/bots')
       setBots(d.bots || [])
@@ -1300,14 +1361,22 @@ function BotsTab({ figureTypes }) {
       setBots([])
       setBotsMeta(null)
     }
-    finally { setLoading(false) }
+    finally { if (showLoading) setLoading(false) }
   }, [])
 
-  useEffect(() => {
-    fetchBots()
-    const t = setInterval(fetchBots, 10_000)
-    return () => clearInterval(t)
+  // Silent sync: keeps the list in sync with the hotel without touching the
+  // Sync button UI state. Runs on mount and every 10 s while the page is open.
+  const silentSync = useCallback(async ({ showLoading = false } = {}) => {
+    try { await api('/api/hotel/bots/sync', { method: 'POST' }) } catch { /* ignore */ }
+    await fetchBots({ showLoading })
+    setLastSynced(new Date())
   }, [fetchBots])
+
+  useEffect(() => {
+    silentSync({ showLoading: true })
+    const t = setInterval(silentSync, 10_000)
+    return () => clearInterval(t)
+  }, [silentSync])
 
   function startEditBot(bot) {
     setEditingBotId(bot.id)
@@ -1391,16 +1460,22 @@ function BotsTab({ figureTypes }) {
           <p className="text-xs text-muted-foreground mt-0.5 max-w-lg">
             These are your <span className="text-foreground">Habbo hotel bots</span> — physical avatars that walk around rooms in the hotel.
             Editing a bot updates it <span className="text-foreground">live in the hotel</span> (name, motto &amp; appearance change instantly).
-            <span className="ml-1 opacity-80">Deleting a bot here only removes it from the portal — the bot stays in your hotel inventory. Sync to re-import it. To permanently destroy a bot, use the hotel admin panel.</span>
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {syncMsg && <span className="text-xs text-muted-foreground">{syncMsg}</span>}
-          <button onClick={syncBots} disabled={syncing}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-secondary transition-colors disabled:opacity-50">
-            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing…' : 'Sync bots'}
-          </button>
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            {syncMsg && <span className="text-xs text-muted-foreground">{syncMsg}</span>}
+            <button onClick={syncBots} disabled={syncing}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-secondary transition-colors disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Syncing…' : 'Sync bots'}
+            </button>
+          </div>
+          {lastSynced && (
+            <span className="text-[10px] text-muted-foreground/50">
+              synced {lastSynced.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1875,22 +1950,6 @@ function UpgradeRequestsTab({ onCountChange }) {
 // Skill-linked integrations (referenced by requires_integration in SKILL.md files)
 const CURATED_INTEGRATIONS = [
   {
-    slug: 'plane',
-    name: 'Plane',
-    title: 'Plane.so',
-    description: 'Project management — issues, cycles, modules, and projects via your Plane workspace.',
-    icon: 'https://plane.so/favicon.ico',
-    type: 'stdio',
-    command: 'uvx',
-    args: ['plane-mcp-server', 'stdio'],
-    envFields: [
-      { key: 'PLANE_API_KEY', label: 'API Key', isSecret: true, isRequired: true, description: 'Your Plane personal API key — Settings → API Tokens in your Plane workspace' },
-      { key: 'PLANE_WORKSPACE_SLUG', label: 'Workspace Slug', isSecret: false, isRequired: true, description: 'Your workspace slug (e.g. "myworkspace" from the URL)' },
-      { key: 'PLANE_BASE_URL', label: 'Instance URL', isSecret: false, isRequired: true, description: 'Your Plane instance URL (e.g. https://plan.fixdev.nl or https://app.plane.so)' },
-    ],
-    docsUrl: 'https://developers.plane.so',
-  },
-  {
     slug: 'atlassian',
     name: 'Atlassian',
     title: 'Atlassian (Jira & Confluence)',
@@ -2068,8 +2127,10 @@ const POPULAR_INTEGRATIONS = [
 
 const ALL_CURATED = [...CURATED_INTEGRATIONS, ...POPULAR_INTEGRATIONS]
 
-function IntegrationsTab() {
+function IntegrationsTab({ me, hotelStatus, onHotelToggle, figureTypes }) {
   const { showToast } = useToast()
+  const { habboConnected } = useHotel()
+  const [hotelToggleBusy, setHotelToggleBusy] = useState(false)
   const [myIntegrations, setMyIntegrations] = useState([])
   const [loadingMy, setLoadingMy] = useState(true)
   const [setupTarget, setSetupTarget] = useState(null)
@@ -2239,14 +2300,85 @@ function IntegrationsTab() {
     })
   }, [registryServers, registryQuery])
 
+  async function toggleHotelIntegration() {
+    setHotelToggleBusy(true)
+    try {
+      await api('/api/my/hotel-enabled', { method: 'PATCH', body: JSON.stringify({ hotel_enabled: !habboConnected }) })
+      onHotelToggle?.()
+    } catch (err) { showToast(err.message, 'error') }
+    finally { setHotelToggleBusy(false) }
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-8">
       <div>
         <h2 className="font-semibold text-foreground">Integrations</h2>
         <p className="text-xs text-muted-foreground mt-1">
-          Connect external MCP servers. Configured integrations are injected into your agent runs automatically.
+          Connect tools and services. Configured integrations are injected into your agent runs automatically.
         </p>
       </div>
+
+      {/* Habbo Hotel integration card */}
+      <section className="space-y-3">
+        <IntSectionHeading icon={Hotel} label="Virtual Office" />
+        <div className={`bg-card border rounded-xl p-4 transition-colors ${habboConnected ? 'border-primary/20' : 'border-border'}`}>
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Hotel className="w-5 h-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <p className="text-sm font-semibold text-foreground">Habbo Hotel</p>
+                {habboConnected && (
+                  <span className="flex items-center gap-1 text-[10px] text-success font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-success" />
+                    {hotelStatus?.loading ? 'Connecting…' : hotelStatus?.socket_online ? 'Online' : 'Offline'}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {habboConnected
+                  ? 'Your agents have Habbo avatars and operate in virtual hotel rooms.'
+                  : 'Give your agents a physical presence — they get Habbo avatars and live in virtual hotel rooms.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {habboConnected && hotelStatus?.socket_online && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const data = await api('/api/hotel/join', { method: 'POST' })
+                      window.open(data.login_url, '_blank')
+                    } catch (err) { showToast(err.message, 'error') }
+                  }}
+                  className="flex items-center gap-1.5 h-8 px-3 text-xs font-medium border border-border rounded-lg hover:bg-secondary transition-colors"
+                >
+                  <Hotel className="w-3 h-3" />
+                  Join Hotel
+                </button>
+              )}
+              <button
+                onClick={toggleHotelIntegration}
+                disabled={hotelToggleBusy}
+                className={`h-8 px-3 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 ${
+                  habboConnected
+                    ? 'border border-border text-muted-foreground hover:bg-secondary'
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                }`}
+              >
+                {hotelToggleBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : habboConnected ? 'Disable' : 'Enable virtual office'}
+              </button>
+            </div>
+          </div>
+
+          {/* Bots section — shown when hotel is connected */}
+          {habboConnected && (
+            <div className="mt-4 pt-4 border-t border-border/50">
+              <BotsTab figureTypes={figureTypes ?? FALLBACK_FIGURE_TYPES} compact />
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* My Configured Integrations */}
       {!loadingMy && myIntegrations.length > 0 && (
@@ -2557,7 +2689,7 @@ function RegistryIntCard({ server, onAdd, approved = false, configured = false }
     <div className={`relative bg-card border rounded-xl p-3 flex flex-col gap-2 ${approved ? 'border-primary/20' : 'border-border'}`}>
       {approved && (
         <span className="absolute top-2 right-2 flex items-center gap-0.5 text-[9px] font-semibold text-primary bg-primary/10 border border-primary/20 rounded px-1.5 py-0.5 leading-none">
-          ★ hotel approved
+          ★ verified
         </span>
       )}
       <div className="flex items-start gap-2.5">

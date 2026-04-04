@@ -10,7 +10,7 @@
     },
     {
       "name": "agent-trigger",
-      "runtimeExecutable": "/Users/tijmendejong/.bun/bin/bun",
+      "runtimeExecutable": "${userHome}/.bun/bin/bun",
       "runtimeArgs": ["run", "agent-trigger/src/server.ts"],
       "port": 3004
     }

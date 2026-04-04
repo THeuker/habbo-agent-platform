@@ -11,10 +11,10 @@ import { useSkillsCatalog } from '../utils/useSkillsCatalog'
 import { useEscapeKey } from '../utils/useEscapeKey'
 import { can } from '../utils/permissions'
 import {
-  Package, Users, User, Check, Loader2, AlertCircle, Download,
+  Package, Users, User, Check, Loader2, AlertCircle,
   Sparkles, BookOpen, ListTodo, MessageSquare, Workflow, LayoutGrid,
   Plus, Upload, Pencil, Trash2, FileJson, X, Save, ChevronRight, ArrowLeft,
-  Zap, Code2, Bot, Tag, Wrench, ExternalLink,
+  Zap, Code2, Bot, Tag, Wrench, ExternalLink, GitFork,
 } from 'lucide-react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -22,6 +22,14 @@ import {
 /** @deprecated use parseSkills from utils/parseSkills */
 function parseCapabilityList(cap) {
   return parseSkills(cap)
+}
+
+/** Marketplace team id → user's fork rows (full + solo) */
+function computeForkSummary(marketplaceTeamId, forkRows) {
+  const forks = (forkRows || []).filter(f => f.source_team_id === marketplaceTeamId)
+  const hasFull = forks.some(f => f.marketplace_install_kind === 'full')
+  const soloCount = forks.filter(f => f.marketplace_install_kind === 'solo').length
+  return { forks, hasFull, soloCount, totalForks: forks.length }
 }
 
 function normalizeTeamTasks(raw) {
@@ -350,10 +358,11 @@ function CreateModal({ onClose, onSaved }) {
 
 // ── Compact team card (grid view) ─────────────────────────────────────────────
 
-function TeamCard({ team, installed, installing, onInstall, onUninstall, disabled, isDev, onEdit, onDelete, onExport, onSelect }) {
+function TeamCard({ team, forkSummary, installing, onForkTeam, onRemoveFork, disabled, isDev, onEdit, onDelete, onExport, onSelect }) {
   const members = team.members || []
+  const { hasFull, soloCount, totalForks } = forkSummary
+  const canForkFull = !hasFull && !disabled
   function handleCardClick(e) {
-    // Don't navigate if user clicked a button inside the card
     if (e.target.closest('button')) return
     onSelect()
   }
@@ -368,32 +377,50 @@ function TeamCard({ team, installed, installing, onInstall, onUninstall, disable
             <h3 className="text-sm font-semibold text-foreground truncate">{team.name}</h3>
             {team.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{team.description}</p>}
           </div>
-          <div className="flex-shrink-0 flex items-center gap-1.5">
-            {isDev && (
-              <>
-                <button onClick={onExport} title="Export JSON" className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><FileJson className="w-3.5 h-3.5" /></button>
-                <button onClick={onEdit} title="Edit" className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                <button onClick={onDelete} title="Delete" className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
-              </>
-            )}
-            {installed ? (
-              <div className="flex items-center gap-1.5">
-                <span className="inline-flex items-center gap-1 text-xs text-success bg-success/10 px-2.5 py-1.5 rounded-lg"><Check className="w-3 h-3" /> Installed</span>
-                {onUninstall && (
-                  <button onClick={e => { e.stopPropagation(); onUninstall() }} disabled={installing}
-                    className="text-xs px-2.5 py-1.5 rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                    {installing ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Uninstall'}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <button onClick={onInstall} disabled={disabled || installing} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                {installing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                {disabled ? 'Pro Required' : installing ? 'Installing…' : 'Install'}
+          <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-1.5">
+              {isDev && (
+                <>
+                  <button onClick={onExport} title="Export JSON" className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><FileJson className="w-3.5 h-3.5" /></button>
+                  <button onClick={onEdit} title="Edit" className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                  <button onClick={onDelete} title="Delete" className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); onForkTeam?.() }}
+                disabled={!canForkFull || installing}
+                title={hasFull ? 'You already have a full fork of this team. Fork a single agent from the Personas tab.' : ''}
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {installing ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitFork className="w-3 h-3" />}
+                {disabled ? 'Pro Required' : installing ? 'Forking…' : hasFull ? 'Full forked' : 'Fork team'}
+              </button>
+            </div>
+            {totalForks > 0 && onRemoveFork && (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); onRemoveFork() }}
+                disabled={!!installing}
+                className="text-xs px-2.5 py-1 rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {installing ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Remove fork…'}
               </button>
             )}
           </div>
         </div>
+        {(hasFull || soloCount > 0) && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {hasFull && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-success bg-success/10 px-2 py-0.5 rounded-md border border-success/20"><Check className="w-3 h-3" /> Full fork</span>
+            )}
+            {soloCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-primary bg-primary/10 px-2 py-0.5 rounded-md border border-primary/20">
+                {soloCount} solo fork{soloCount === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-3 mt-2.5">
           <span className="text-[10px] bg-muted px-2 py-0.5 rounded-full text-muted-foreground">{team.execution_mode || 'concurrent'}</span>
           <span className="text-[10px] text-muted-foreground"><Users className="w-3 h-3 inline mr-1" />{members.length} {members.length === 1 ? 'agent' : 'agents'}</span>
@@ -411,7 +438,7 @@ function TeamCard({ team, installed, installing, onInstall, onUninstall, disable
 
 // ── Team detail page ──────────────────────────────────────────────────────────
 
-function MemberCard({ member: m, skillPairs, onSelectPersona, onViewSkill }) {
+function MemberCard({ member: m, skillPairs, onSelectPersona, onViewSkill, forkAgentAction }) {
   return (
     <div className="rounded-xl border border-border/80 bg-card shadow-sm p-4 space-y-3">
       <div className="flex items-start gap-3">
@@ -433,6 +460,15 @@ function MemberCard({ member: m, skillPairs, onSelectPersona, onViewSkill }) {
             {m.role?.trim() && <span className="text-[10px] bg-primary/15 text-primary px-2 py-0.5 rounded">Team role: {m.role}</span>}
             {m.persona_role?.trim() && <span className="text-[10px] bg-muted px-2 py-0.5 rounded text-muted-foreground">Persona: {m.persona_role}</span>}
           </div>
+          {forkAgentAction && (
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); forkAgentAction.onClick() }}
+              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
+            >
+              <GitFork className="w-3 h-3" /> {forkAgentAction.label}
+            </button>
+          )}
         </div>
       </div>
       {skillPairs.length > 0 && (
@@ -455,11 +491,13 @@ function MemberCard({ member: m, skillPairs, onSelectPersona, onViewSkill }) {
   )
 }
 
-function TeamDetail({ team, installed, installing, onInstall, onUninstall, disabled, isDev, onEdit, onExport, onBack, onViewSkill }) {
+function TeamDetail({ team, forkSummary, installing, onForkTeam, onRemoveFork, onForkPersona, disabled, isDev, onEdit, onExport, onBack, onViewSkill }) {
   const members = team.members || []
   const teamTasks = normalizeTeamTasks(team.tasks_json)
   const flows = team.flows || []
   const [viewPersona, setViewPersona] = useState(null)
+  const { hasFull, soloCount, totalForks } = forkSummary
+  const canForkFull = !hasFull && !disabled
 
   if (viewPersona) {
     // Normalise member → persona shape: persona_role → role
@@ -497,29 +535,42 @@ function TeamDetail({ team, installed, installing, onInstall, onUninstall, disab
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/50 px-3 py-1 text-[11px] text-muted-foreground">
                 <Users className="w-3 h-3" /> {members.length} {members.length === 1 ? 'agent' : 'agents'}
               </span>
+              {hasFull && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-success bg-success/10 px-2.5 py-1 rounded-full border border-success/20"><Check className="w-3 h-3" /> Full fork</span>
+              )}
+              {soloCount > 0 && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-primary bg-primary/10 px-2.5 py-1 rounded-full border border-primary/20">{soloCount} solo fork{soloCount === 1 ? '' : 's'}</span>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {isDev && (
-              <>
-                <button onClick={onExport} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><FileJson className="w-3.5 h-3.5" /> Export</button>
-                <button onClick={onEdit} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><Pencil className="w-3.5 h-3.5" /> Edit</button>
-              </>
-            )}
-            {installed ? (
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-xs text-success bg-success/10 px-3 py-1.5 rounded-lg"><Check className="w-3 h-3" /> Installed</span>
-                {onUninstall && (
-                  <button onClick={onUninstall} disabled={installing}
-                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                    {installing ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Uninstall'}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <button onClick={onInstall} disabled={disabled || installing} className="inline-flex items-center gap-1.5 text-xs font-medium px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
-                {installing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                {disabled ? 'Pro Required' : installing ? 'Installing…' : 'Install'}
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <div className="flex items-center gap-2">
+              {isDev && (
+                <>
+                  <button onClick={onExport} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><FileJson className="w-3.5 h-3.5" /> Export</button>
+                  <button onClick={onEdit} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={onForkTeam}
+                disabled={!canForkFull || installing}
+                title={hasFull ? 'You already have a full fork. Fork a single agent below.' : ''}
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                {installing ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitFork className="w-3 h-3" />}
+                {disabled ? 'Pro Required' : installing ? 'Forking…' : hasFull ? 'Full forked' : 'Fork team'}
+              </button>
+            </div>
+            {totalForks > 0 && onRemoveFork && (
+              <button
+                type="button"
+                onClick={onRemoveFork}
+                disabled={!!installing}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-50 transition-colors"
+              >
+                {installing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                Remove fork…
               </button>
             )}
           </div>
@@ -588,6 +639,7 @@ function TeamDetail({ team, installed, installing, onInstall, onUninstall, disab
                 skillPairs={skillPairs}
                 onSelectPersona={setViewPersona}
                 onViewSkill={onViewSkill}
+                forkAgentAction={onForkPersona ? { label: 'Fork this agent', onClick: () => onForkPersona(m) } : null}
               />
             )
           })}
@@ -981,18 +1033,52 @@ function PersonaDetail({ persona, onBack, backLabel = 'Personas', onViewSkill })
 
 // ── Personas Tab ──────────────────────────────────────────────────────────────
 
-function PersonasTab({ onViewSkill }) {
+function PersonasTab({ me, onViewSkill }) {
   const { catalog: skills } = useSkillsCatalog()
+  const { showToast } = useToast()
   const [personas, setPersonas] = useState([])
+  const [teamNames, setTeamNames] = useState({})
   const [loading, setLoading] = useState(true)
   const [selectedPersona, setSelectedPersona] = useState(null)
+  const [soloTarget, setSoloTarget] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const canInstall = can(me, 'marketplace.install')
 
   useEffect(() => {
-    api('/api/agents/personas')
-      .then(pd => setPersonas(pd.personas || []))
+    Promise.all([api('/api/agents/personas'), api('/api/agents/teams')])
+      .then(([pd, td]) => {
+        setPersonas(pd.personas || [])
+        const m = {}
+        for (const t of td.teams || []) m[t.id] = t.name
+        setTeamNames(m)
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  useEscapeKey(() => { if (soloTarget) setSoloTarget(null) }, !!soloTarget)
+
+  async function confirmSolo(persona, botAssignments) {
+    const tid = persona.marketplace_team_id
+    if (!tid) {
+      showToast('This persona is not linked to a marketplace team.', 'error')
+      return
+    }
+    setBusy(true)
+    try {
+      await api(`/api/marketplace/teams/${tid}/personas/${persona.id}/install`, {
+        method: 'POST',
+        body: JSON.stringify({ bot_assignments: botAssignments }),
+      })
+      setSoloTarget(null)
+      showToast('Agent forked to My Agents.')
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   if (loading) return (
     <div className="flex items-center justify-center py-16">
@@ -1008,8 +1094,18 @@ function PersonasTab({ onViewSkill }) {
     <div className="space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-foreground">Personas</h2>
-        <p className="text-sm text-muted-foreground">Shared agent personas available in the marketplace. Install a team to get its personas in My Agents.</p>
+        <p className="text-sm text-muted-foreground">Templates from marketplace teams. Fork one agent into a solo team, or fork the whole team from the Teams tab.</p>
       </div>
+
+      {!canInstall && (
+        <div className="bg-warning/10 border border-warning/30 rounded-xl p-4 flex items-start gap-3">
+          <AlertCircle className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm text-warning/80 font-medium">Pro tier required</p>
+            <p className="text-xs text-warning/60 mt-0.5">Upgrade to Pro to fork marketplace agents.</p>
+          </div>
+        </div>
+      )}
 
       {personas.length === 0 ? (
         <div className="bg-card border border-border rounded-2xl p-8 text-center">
@@ -1021,47 +1117,75 @@ function PersonasTab({ onViewSkill }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {personas.map(persona => {
             const personaSkills = parseSkills(persona.capabilities, skills)
+            const teamName = persona.marketplace_team_id ? teamNames[persona.marketplace_team_id] : null
             return (
-              <button key={persona.id} onClick={() => setSelectedPersona(persona)}
-                className="group text-left bg-card border border-border rounded-xl overflow-hidden hover:border-primary/40 hover:shadow-sm transition-all flex">
-                {/* Figure column */}
-                <div className="flex flex-col items-center justify-start pt-4 px-3 pb-4 bg-secondary/30 border-r border-border flex-shrink-0 w-20">
-                  <HabboFigure figure={persona.figure} figureType={persona.figure_type} size="xl" animate={false} />
-                </div>
-                <div className="flex-1 min-w-0 p-3 space-y-2 flex flex-col">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">{persona.name}</p>
-                    {persona.role && (
-                      <span className="inline-flex items-center text-[11px] bg-primary/10 text-primary border border-primary/20 rounded-full px-2 py-0.5 mt-1">
-                        {persona.role}
-                      </span>
-                    )}
+              <div
+                key={persona.id}
+                className="group bg-card border border-border rounded-xl overflow-hidden hover:border-primary/40 hover:shadow-sm transition-all flex"
+              >
+                <button type="button" onClick={() => setSelectedPersona(persona)}
+                  className="flex flex-1 min-w-0 text-left">
+                  <div className="flex flex-col items-center justify-start pt-4 px-3 pb-4 bg-secondary/30 border-r border-border flex-shrink-0 w-20">
+                    <HabboFigure figure={persona.figure} figureType={persona.figure_type} size="xl" animate={false} />
                   </div>
-
-                  {persona.description && (
-                    <p className="text-xs text-muted-foreground line-clamp-2 flex-1">{persona.description}</p>
-                  )}
-
-                  {/* Skills chips */}
-                  {personaSkills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50 font-medium uppercase tracking-wider">
-                        <Sparkles className="w-2.5 h-2.5" /> Skills
-                      </span>
-                      {personaSkills.map((s, i) => (
-                        <span key={i} className="text-[11px] bg-secondary text-muted-foreground border border-border rounded-md px-2 py-0.5">
-                          {s}
+                  <div className="flex-1 min-w-0 p-3 space-y-2 flex flex-col">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">{persona.name}</p>
+                      {persona.role && (
+                        <span className="inline-flex items-center text-[11px] bg-primary/10 text-primary border border-primary/20 rounded-full px-2 py-0.5 mt-1">
+                          {persona.role}
                         </span>
-                      ))}
+                      )}
+                      {teamName && (
+                        <p className="text-[10px] text-muted-foreground mt-1">From team: {teamName}</p>
+                      )}
                     </div>
-                  )}
 
-                  <p className="text-[10px] text-primary/40 group-hover:text-primary/70 transition-colors mt-auto pt-1">View persona →</p>
-                </div>
-              </button>
+                    {persona.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2 flex-1">{persona.description}</p>
+                    )}
+
+                    {personaSkills.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50 font-medium uppercase tracking-wider">
+                          <Sparkles className="w-2.5 h-2.5" /> Skills
+                        </span>
+                        {personaSkills.map((s, i) => (
+                          <span key={i} className="text-[11px] bg-secondary text-muted-foreground border border-border rounded-md px-2 py-0.5">
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <p className="text-[10px] text-primary/40 group-hover:text-primary/70 transition-colors mt-auto pt-1">View persona →</p>
+                  </div>
+                </button>
+                {canInstall && persona.marketplace_team_id && (
+                  <div className="flex flex-col justify-center pr-3 border-l border-border/60 pl-1">
+                    <button
+                      type="button"
+                      onClick={() => setSoloTarget(persona)}
+                      className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg border border-primary/30 text-primary hover:bg-primary/10 whitespace-nowrap"
+                    >
+                      <GitFork className="w-3 h-3 inline mr-1" />
+                      Fork agent
+                    </button>
+                  </div>
+                )}
+              </div>
             )
           })}
         </div>
+      )}
+      {soloTarget && (
+        <SoloForkModal
+          teamName={teamNames[soloTarget.marketplace_team_id] || 'Marketplace team'}
+          persona={soloTarget}
+          installing={busy}
+          onClose={() => setSoloTarget(null)}
+          onConfirm={(assignments) => confirmSolo(soloTarget, assignments)}
+        />
       )}
     </div>
   )
@@ -1107,8 +1231,8 @@ function InstallModal({ team, onClose, onConfirm, installing }) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <p className="font-semibold text-sm text-foreground">Install {team.name}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Link each agent to one of your bots before installing.</p>
+            <p className="font-semibold text-sm text-foreground">Fork team · {team.name}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Link each agent to one of your bots — we copy the team into My Agents.</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
             <X className="w-4 h-4" />
@@ -1165,7 +1289,7 @@ function InstallModal({ team, onClose, onConfirm, installing }) {
           {bots && bots.length === 0 && !botsError && (
             <div className="bg-warning/10 border border-warning/30 rounded-lg px-3 py-2 flex items-start gap-2">
               <AlertCircle className="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" />
-              <p className="text-xs text-warning/80">You have no bots yet. Create bots in your Habbo hotel first, then come back to install this team.</p>
+              <p className="text-xs text-warning/80">You have no bots yet. Create bots in your Habbo hotel first, then come back to fork this team.</p>
             </div>
           )}
         </div>
@@ -1180,9 +1304,135 @@ function InstallModal({ team, onClose, onConfirm, installing }) {
             disabled={!allAssigned || installing || !bots || bots.length === 0}
             className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            {installing ? 'Installing…' : 'Install team'}
+            {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitFork className="w-3.5 h-3.5" />}
+            {installing ? 'Forking…' : 'Fork team'}
           </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+/** Single marketplace persona → solo fork (one bot link) */
+function SoloForkModal({ teamName, persona, onClose, onConfirm, installing }) {
+  const [bots, setBots] = useState(null)
+  const [botsError, setBotsError] = useState(null)
+  const [botName, setBotName] = useState('')
+
+  useEffect(() => {
+    api('/api/agents/bots?mine=true')
+      .then(d => setBots(d.bots || []))
+      .catch(() => setBotsError('Could not load your bots.'))
+  }, [])
+
+  useEscapeKey(onClose, true)
+
+  const assigned = botName.trim().length > 0
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <p className="font-semibold text-sm text-foreground">Fork this agent</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {persona.name} · {teamName}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          {botsError && (
+            <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {botsError}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">Choose a Habbo bot to attach to this forked persona.</p>
+          <div className="space-y-1.5">
+            <label className="text-[11px] text-muted-foreground">Bot</label>
+            <select
+              value={botName}
+              onChange={e => setBotName(e.target.value)}
+              disabled={!bots}
+              className={`w-full bg-muted/40 border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors ${
+                !assigned ? 'border-destructive/50' : 'border-border'
+              }`}
+            >
+              <option value="">— select a bot —</option>
+              {(bots || []).map(bot => (
+                <option key={bot.id} value={bot.name}>{bot.name}</option>
+              ))}
+            </select>
+          </div>
+          {bots === null && !botsError && (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {bots && bots.length === 0 && !botsError && (
+            <div className="bg-warning/10 border border-warning/30 rounded-lg px-3 py-2 flex items-start gap-2">
+              <AlertCircle className="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" />
+              <p className="text-xs text-warning/80">You have no bots yet. Create bots in your Habbo hotel first.</p>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-4 border-t border-border flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={installing} className="text-sm px-4 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm({ [persona.name]: botName })}
+            disabled={!assigned || installing || !bots || bots.length === 0}
+            className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitFork className="w-3.5 h-3.5" />}
+            {installing ? 'Forking…' : 'Fork agent'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+function ForkPickerModal({ team, forks, onClose, onRemoveFork, deletingId }) {
+  useEscapeKey(onClose, true)
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden max-h-[90vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div>
+            <p className="font-semibold text-sm text-foreground">Remove a fork</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{team?.name}</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-2 overflow-y-auto">
+          <p className="text-xs text-muted-foreground mb-2">You have multiple copies from this marketplace team. Remove one from your workspace.</p>
+          {forks.map(f => (
+            <div key={f.id} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {f.marketplace_install_kind === 'full' ? 'Full fork' : 'Solo fork'} · id {f.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemoveFork(f.id)}
+                disabled={deletingId != null}
+                className="text-xs px-2.5 py-1 rounded-md border border-destructive/40 text-destructive hover:bg-destructive/10 disabled:opacity-50 shrink-0"
+              >
+                {deletingId === f.id ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Remove'}
+              </button>
+            </div>
+          ))}
         </div>
       </div>
     </div>,
@@ -1193,36 +1443,39 @@ function InstallModal({ team, onClose, onConfirm, installing }) {
 function TeamsTab({ me, isDev, onViewSkill }) {
   const { showToast } = useToast()
   const [teams, setTeams] = useState([])
-  const [installedIds, setInstalledIds] = useState([])
+  const [forkRows, setForkRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [installingId, setInstallingId] = useState(null)
+  const [busyMarketplaceTeamId, setBusyMarketplaceTeamId] = useState(null)
+  const [deletingForkId, setDeletingForkId] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [editingTeam, setEditingTeam] = useState(null)
   const [selectedTeam, setSelectedTeam] = useState(null)
-  const [installTarget, setInstallTarget] = useState(null) // team pending install modal
+  const [installTarget, setInstallTarget] = useState(null)
+  const [forkPickerTeam, setForkPickerTeam] = useState(null)
+  const [soloTarget, setSoloTarget] = useState(null)
   const selectedTeamRef = useRef(null)
 
-  const canInstall   = can(me, 'marketplace.install')
+  const canInstall = can(me, 'marketplace.install')
   const canUninstall = can(me, 'marketplace.uninstall')
 
-  // Escape key: close active modal or deselect team
   useEscapeKey(() => {
+    if (forkPickerTeam) { setForkPickerTeam(null); return }
+    if (soloTarget) { setSoloTarget(null); return }
     if (installTarget) { setInstallTarget(null); return }
     if (editingTeam) { setEditingTeam(null); return }
-    if (showCreate)  { setShowCreate(false); return }
-    if (showImport)  { setShowImport(false); return }
+    if (showCreate) { setShowCreate(false); return }
+    if (showImport) { setShowImport(false); return }
     if (selectedTeam) setSelectedTeam(null)
-  }, !!(installTarget || editingTeam || showCreate || showImport || selectedTeam))
+  }, !!(forkPickerTeam || soloTarget || installTarget || editingTeam || showCreate || showImport || selectedTeam))
 
-  // Keep ref in sync so load() can read current value without stale closure
   useEffect(() => { selectedTeamRef.current = selectedTeam }, [selectedTeam])
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [td, id] = await Promise.all([api('/api/agents/teams'), api('/api/my/installed-team-ids')])
+      const [td, fk] = await Promise.all([api('/api/agents/teams'), api('/api/my/marketplace-forks')])
       const teamsWithMembers = await Promise.all(
         (td.teams || []).map(async (t) => {
           try { const d = (await api(`/api/agents/teams/${t.id}`)).team || {}; return { ...t, ...d, members: d.members || [] } }
@@ -1230,7 +1483,7 @@ function TeamsTab({ me, isDev, onViewSkill }) {
         })
       )
       setTeams(teamsWithMembers)
-      setInstalledIds(id.installed || [])
+      setForkRows(fk.forks || [])
       const current = selectedTeamRef.current
       if (current) {
         const fresh = teamsWithMembers.find(t => t.id === current.id)
@@ -1245,23 +1498,69 @@ function TeamsTab({ me, isDev, onViewSkill }) {
     setInstallTarget(team)
   }
 
-  async function confirmInstall(team, botAssignments) {
-    setInstallingId(team.id)
-    try {
-      await api(`/api/marketplace/teams/${team.id}/install`, { method: 'POST', body: JSON.stringify({ bot_assignments: botAssignments }) })
-      setInstalledIds(prev => [...prev, team.id])
-      setInstallTarget(null)
-      showToast('Team installed! Your agents are linked and ready to deploy.')
-    } catch (e) { showToast(e.message, 'error') } finally { setInstallingId(null) }
+  async function removeFork(userTeamId) {
+    await api(`/api/marketplace/forks/${userTeamId}`, { method: 'DELETE' })
+    await load()
+    showToast('Fork removed.')
   }
 
-  async function uninstallTeam(teamId) {
-    setInstallingId(teamId)
+  async function confirmInstall(team, botAssignments) {
+    setBusyMarketplaceTeamId(team.id)
     try {
-      await api(`/api/marketplace/teams/${teamId}/uninstall`, { method: 'DELETE' })
-      setInstalledIds(prev => prev.filter(id => id !== teamId))
-      showToast('Team uninstalled.')
-    } catch (e) { showToast(e.message || 'Uninstall failed', 'error') } finally { setInstallingId(null) }
+      await api(`/api/marketplace/teams/${team.id}/install`, { method: 'POST', body: JSON.stringify({ bot_assignments: botAssignments }) })
+      setInstallTarget(null)
+      await load()
+      showToast('Team forked to My Agents. Bots are linked and ready to deploy.')
+    } catch (e) { showToast(e.message, 'error') } finally { setBusyMarketplaceTeamId(null) }
+  }
+
+  async function requestRemoveFork(marketplaceTeam) {
+    const s = computeForkSummary(marketplaceTeam.id, forkRows)
+    if (s.forks.length === 0) return
+    if (s.forks.length === 1) {
+      setBusyMarketplaceTeamId(marketplaceTeam.id)
+      try {
+        await removeFork(s.forks[0].id)
+      } catch (e) {
+        showToast(e.message || 'Remove failed', 'error')
+      } finally {
+        setBusyMarketplaceTeamId(null)
+      }
+    } else {
+      setForkPickerTeam(marketplaceTeam)
+    }
+  }
+
+  async function handleRemoveForkFromPicker(userTeamId) {
+    setDeletingForkId(userTeamId)
+    try {
+      await api(`/api/marketplace/forks/${userTeamId}`, { method: 'DELETE' })
+      const fk = await api('/api/my/marketplace-forks')
+      setForkRows(fk.forks || [])
+      await load()
+      showToast('Fork removed.')
+      if (forkPickerTeam) {
+        const left = computeForkSummary(forkPickerTeam.id, fk.forks).forks.length
+        if (left === 0) setForkPickerTeam(null)
+      }
+    } catch (e) {
+      showToast(e.message || 'Remove failed', 'error')
+    } finally {
+      setDeletingForkId(null)
+    }
+  }
+
+  async function confirmSoloFork(marketplaceTeam, member, botAssignments) {
+    setBusyMarketplaceTeamId(marketplaceTeam.id)
+    try {
+      await api(`/api/marketplace/teams/${marketplaceTeam.id}/personas/${member.id}/install`, {
+        method: 'POST',
+        body: JSON.stringify({ bot_assignments: botAssignments }),
+      })
+      setSoloTarget(null)
+      await load()
+      showToast('Agent forked to My Agents.')
+    } catch (e) { showToast(e.message, 'error') } finally { setBusyMarketplaceTeamId(null) }
   }
 
   async function deleteTeam(team) {
@@ -1296,10 +1595,11 @@ function TeamsTab({ me, isDev, onViewSkill }) {
       {selectedTeam ? (
         <TeamDetail
           team={selectedTeam}
-          installed={installedIds.includes(selectedTeam.id)}
-          installing={installingId === selectedTeam.id}
-          onInstall={canInstall ? () => openInstallModal(selectedTeam) : undefined}
-          onUninstall={canUninstall ? () => uninstallTeam(selectedTeam.id) : undefined}
+          forkSummary={computeForkSummary(selectedTeam.id, forkRows)}
+          installing={busyMarketplaceTeamId === selectedTeam.id}
+          onForkTeam={canInstall ? () => openInstallModal(selectedTeam) : undefined}
+          onRemoveFork={canUninstall ? () => requestRemoveFork(selectedTeam) : undefined}
+          onForkPersona={canInstall ? (m) => setSoloTarget({ team: selectedTeam, member: m }) : undefined}
           disabled={!canInstall}
           isDev={isDev}
           onEdit={() => setEditingTeam(selectedTeam)}
@@ -1312,7 +1612,7 @@ function TeamsTab({ me, isDev, onViewSkill }) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-foreground">Teams</h2>
-              <p className="text-sm text-muted-foreground">Browse and install agent teams. After installing, configure bots in My Agents.</p>
+              <p className="text-sm text-muted-foreground">Fork marketplace teams into your workspace — like a Git fork — then deploy from My Agents.</p>
             </div>
             {isDev && (
               <div className="flex items-center gap-2 shrink-0">
@@ -1327,7 +1627,7 @@ function TeamsTab({ me, isDev, onViewSkill }) {
               <AlertCircle className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
               <div>
                 <p className="text-sm text-warning/80 font-medium">Pro tier required</p>
-                <p className="text-xs text-warning/60 mt-0.5">Upgrade to Pro to install and deploy agent teams.</p>
+                <p className="text-xs text-warning/60 mt-0.5">Upgrade to Pro to fork and deploy marketplace teams.</p>
               </div>
             </div>
           )}
@@ -1342,13 +1642,18 @@ function TeamsTab({ me, isDev, onViewSkill }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {teams.map(team => (
                 <TeamCard
-                  key={team.id} team={team}
-                  installed={installedIds.includes(team.id)} installing={installingId === team.id}
-                  onInstall={canInstall ? () => openInstallModal(team) : undefined}
-                  onUninstall={canUninstall ? () => uninstallTeam(team.id) : undefined}
-                  disabled={!canInstall} isDev={isDev}
-                  onEdit={() => setEditingTeam(team)} onDelete={() => deleteTeam(team)}
-                  onExport={() => exportTeam(team)} onSelect={() => setSelectedTeam(team)}
+                  key={team.id}
+                  team={team}
+                  forkSummary={computeForkSummary(team.id, forkRows)}
+                  installing={busyMarketplaceTeamId === team.id}
+                  onForkTeam={canInstall ? () => openInstallModal(team) : undefined}
+                  onRemoveFork={canUninstall ? () => requestRemoveFork(team) : undefined}
+                  disabled={!canInstall}
+                  isDev={isDev}
+                  onEdit={() => setEditingTeam(team)}
+                  onDelete={() => deleteTeam(team)}
+                  onExport={() => exportTeam(team)}
+                  onSelect={() => setSelectedTeam(team)}
                 />
               ))}
             </div>
@@ -1361,9 +1666,27 @@ function TeamsTab({ me, isDev, onViewSkill }) {
       {installTarget && (
         <InstallModal
           team={installTarget}
-          installing={installingId === installTarget.id}
+          installing={busyMarketplaceTeamId === installTarget.id}
           onClose={() => setInstallTarget(null)}
           onConfirm={(assignments) => confirmInstall(installTarget, assignments)}
+        />
+      )}
+      {soloTarget && (
+        <SoloForkModal
+          teamName={soloTarget.team.name}
+          persona={soloTarget.member}
+          installing={busyMarketplaceTeamId === soloTarget.team.id}
+          onClose={() => setSoloTarget(null)}
+          onConfirm={(assignments) => confirmSoloFork(soloTarget.team, soloTarget.member, assignments)}
+        />
+      )}
+      {forkPickerTeam && (
+        <ForkPickerModal
+          team={forkPickerTeam}
+          forks={computeForkSummary(forkPickerTeam.id, forkRows).forks}
+          onClose={() => setForkPickerTeam(null)}
+          onRemoveFork={handleRemoveForkFromPicker}
+          deletingId={deletingForkId}
         />
       )}
     </div>
@@ -1385,7 +1708,7 @@ export function MarketplaceView({ me, onNavigate }) {
       {/* Page header */}
       <div>
         <h2 className="text-lg font-semibold text-foreground">Marketplace</h2>
-        <p className="text-sm text-muted-foreground">Browse teams, personas, and skills. Install teams to get started.</p>
+        <p className="text-sm text-muted-foreground">Browse teams, personas, and skills. Fork templates into your workspace to get started.</p>
       </div>
 
       {/* Tab bar */}
@@ -1409,7 +1732,7 @@ export function MarketplaceView({ me, onNavigate }) {
 
       {/* Tab content */}
       {activeTab === 'teams'    && <TeamsTab me={me} isDev={isDev} onViewSkill={viewSkill} />}
-      {activeTab === 'personas' && <PersonasTab onViewSkill={viewSkill} />}
+      {activeTab === 'personas' && <PersonasTab me={me} onViewSkill={viewSkill} />}
       {activeTab === 'skills'   && (
         <SkillsTab
           onNavigate={onNavigate}

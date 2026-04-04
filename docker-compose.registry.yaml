@@ -215,6 +215,7 @@ services:
       - HABBO_HOOK_ENABLED=false
       - PORTAL_URL=${HOTEL_PORTAL_INTERNAL_URL:-http://agent-portal:3000}
       - PORTAL_INTERNAL_SECRET=${HOTEL_PORTAL_INTERNAL_SECRET:-change-this-secret}
+      - AGENT_TRIGGER_HEADLESS_ROOM_ID=${AGENT_TRIGGER_HEADLESS_ROOM_ID:-900001}
     volumes:
       - .:/project:ro
     ports:

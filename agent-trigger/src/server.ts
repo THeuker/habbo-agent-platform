@@ -15,6 +15,11 @@ const LOG_FILE = existsSync(PROJECT_DIR) ? join(PROJECT_DIR, "hotel-team.log") :
 try { if (existsSync(LOG_FILE)) renameSync(LOG_FILE, LOG_FILE + ".bak"); } catch { /* non-fatal */ }
 // Max concurrent team runs per server instance (0 = unlimited)
 const MAX_CONCURRENT_RUNS = parseInt(process.env.HABBO_MAX_CONCURRENT_RUNS ?? "0");
+/** Isolation id for runs when portal sets hotel_integrated=false (not a real Habbo room). Override if it collides with a real room id. */
+const HEADLESS_ROOM_ID = (() => {
+  const n = parseInt(process.env.AGENT_TRIGGER_HEADLESS_ROOM_ID ?? "900001", 10);
+  return Number.isFinite(n) && n > 0 ? n : 900001;
+})();
 // Auto-kill a run after this many ms (default 20 min)
 const RUN_TIMEOUT_MS = parseInt(process.env.HABBO_RUN_TIMEOUT_MS ?? String(20 * 60 * 1000));
 
@@ -362,7 +367,7 @@ interface TeamConfig {
 interface TriggerPostBody {
   team_id?: number;
   flow_id?: number | null;
-  room_id?: number;
+  room_id?: number | null;
   triggered_by?: string;
   portal_url?: string;
   pack_source_url?: string;
@@ -370,6 +375,8 @@ interface TriggerPostBody {
   pack_id?: number;
   portal_user_id?: number;
   user_team?: boolean;
+  /** false = team workspace / no Habbo hotel — use HEADLESS_ROOM_ID for state isolation */
+  hotel_integrated?: boolean;
   language?: string;
   narrator_verbosity?: number;
   task_mode?: 'session_goal' | 'team_tasks';
@@ -766,8 +773,28 @@ async function postRunReport(params: {
   } catch { /* non-fatal — report storage should never block a run */ }
 }
 
-function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string, userApiKey?: string | null, onChild?: (child: ReturnType<typeof spawn>) => void, userMcpToken?: string | null, integrations: IntegrationRow[] = []): Promise<string> {
+function runOrchestratorWithPrompt(
+  prompt: string,
+  roomId: number,
+  from: string,
+  userApiKey?: string | null,
+  onChild?: (child: ReturnType<typeof spawn>) => void,
+  userMcpToken?: string | null,
+  integrations: IntegrationRow[] = [],
+  /** When false (default), only the caller-supplied key is used — never ANTHROPIC_API_KEY from the host env (per-user billing isolation). */
+  allowEnvAnthropicFallback = false
+): Promise<string> {
   return new Promise(async (resolve, reject) => {
+    const effectiveAnthropicKey = (userApiKey && userApiKey.trim())
+      ? userApiKey.trim()
+      : (allowEnvAnthropicFallback ? (process.env.ANTHROPIC_API_KEY ?? "").trim() : "");
+    if (!effectiveAnthropicKey) {
+      reject(new Error(allowEnvAnthropicFallback
+        ? "ANTHROPIC_API_KEY is not set in the environment"
+        : "No Anthropic API key configured for this portal user"));
+      return;
+    }
+
     // Clear any stale stop signal from a previous run in this room
     const sf = stopFile(roomId);
     if (existsSync(sf)) unlinkSync(sf);
@@ -788,7 +815,7 @@ function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string,
       await new Promise<void>((res) => {
         const probe = spawn(claudeBin, ["mcp", "list"], {
           cwd: runDir,
-          env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ANTHROPIC_API_KEY: userApiKey || (process.env.ANTHROPIC_API_KEY ?? "") },
+          env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ANTHROPIC_API_KEY: effectiveAnthropicKey },
           stdio: ["ignore", "pipe", "pipe"],
         });
         const kill = setTimeout(() => { try { probe.kill(); } catch {} res(); }, 10_000);
@@ -814,7 +841,7 @@ function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string,
     // Allowlist of env vars the Claude subprocess needs. Everything else from
     // process.env (PORTAL_INTERNAL_SECRET, TWILIO_*, ATLASSIAN_*, etc.) is
     // stripped so it cannot be read by the AI model or by stdio MCP children
-    // (e.g. plane-mcp-server) that inherit the Claude process environment.
+    // (e.g. stdio MCP servers) that inherit the Claude process environment.
     const SAFE_PASS_THROUGH: string[] = [
       "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TMPDIR",
       "TZ", "TERM", "NODE_ENV",
@@ -836,7 +863,7 @@ function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string,
       cwd: runDir,
       env: {
         ...safeEnv,
-        ANTHROPIC_API_KEY: userApiKey || (process.env.ANTHROPIC_API_KEY ?? ""),
+        ANTHROPIC_API_KEY: effectiveAnthropicKey,
         MCP_API_KEY: process.env.MCP_API_KEY ?? "",
         USER_MCP_TOKEN: userMcpToken || "",
         HABBO_HOOK_ENABLED: "true",
@@ -967,7 +994,7 @@ function runOrchestratorWithPrompt(prompt: string, roomId: number, from: string,
 }
 
 function runOrchestrator(roomId: number, from: string): Promise<string> {
-  return runOrchestratorWithPrompt(buildPrompt(roomId, from), roomId, from, null, undefined, null);
+  return runOrchestratorWithPrompt(buildPrompt(roomId, from), roomId, from, null, undefined, null, [], true);
 }
 
 // ── Run lifecycle ────────────────────────────────────────────────────────────
@@ -1145,16 +1172,26 @@ const server = Bun.serve({
 
       // Pack mode
       if (body.pack_source_url && body.role_assignments) {
+        const hotelIntegrated = body.hotel_integrated !== false;
+        const packRoomId = hotelIntegrated ? (Number(body.room_id) || 50) : HEADLESS_ROOM_ID;
         const packConfig: PackConfig = {
           pack_id: Number(body.pack_id) || 0,
           pack_source_url: body.pack_source_url,
           role_assignments: body.role_assignments,
-          room_id: Number(body.room_id) || 50,
+          room_id: packRoomId,
           triggered_by: body.triggered_by ?? 'portal',
           language: body.language || 'en',
           narrator_verbosity: Number(body.narrator_verbosity) || 3,
         };
-        const packRoomId = packConfig.room_id;
+
+        const packPortalUserId = Number(body.portal_user_id) || 0;
+        const [packUserApiKey, packUserMcpToken] = await Promise.all([
+          fetchUserAnthropicKey(packPortalUserId),
+          fetchUserMcpToken(packPortalUserId),
+        ]);
+        if (packPortalUserId > 0 && !packUserApiKey?.trim()) {
+          return Response.json({ ok: false, error: "No Anthropic API key configured for this portal user. Add one in Account → Settings." }, { status: 400 });
+        }
 
         if (activeRuns.has(packRoomId) || triggeringRooms.has(packRoomId)) {
           return Response.json({ ok: false, error: `Team already active in room ${packRoomId}. Stop it first.` }, { status: 409 });
@@ -1163,6 +1200,7 @@ const server = Bun.serve({
           return Response.json({ ok: false, error: `Server at capacity (${MAX_CONCURRENT_RUNS} concurrent runs). Try again later.` }, { status: 429 });
         }
         triggeringRooms.add(packRoomId);
+        if (!hotelIntegrated) logRoom(packRoomId, `[trigger] Pack headless run (hotel integration off, room key ${HEADLESS_ROOM_ID})`);
 
         let prompt: string;
         try {
@@ -1176,11 +1214,6 @@ const server = Bun.serve({
         const knownBots = Object.values(packConfig.role_assignments).filter(Boolean);
         writeNarratorBotsFile(packRoomId, knownBots, packConfig.language || 'en', packConfig.narrator_verbosity ?? 3);
 
-        const packPortalUserId = Number(body.portal_user_id) || 0;
-        const [packUserApiKey, packUserMcpToken] = await Promise.all([
-          fetchUserAnthropicKey(packPortalUserId),
-          fetchUserMcpToken(packPortalUserId),
-        ]);
         if (packUserApiKey) logRoom(packRoomId, `[trigger] Pack using API key from portal user ${body.portal_user_id}`);
         if (packUserMcpToken) logRoom(packRoomId, `[trigger] Pack using MCP token from portal user ${body.portal_user_id}`);
 
@@ -1209,7 +1242,8 @@ const server = Bun.serve({
 
       const teamId = Number(body.team_id);
       const flowId = body.flow_id ? Number(body.flow_id) : null;
-      const roomId = Number(body.room_id) || 50;
+      const hotelIntegrated = body.hotel_integrated !== false;
+      const roomId = hotelIntegrated ? (Number(body.room_id) || 50) : HEADLESS_ROOM_ID;
       const triggeredBy = body.triggered_by ?? "portal";
       const portalUserId = Number(body.portal_user_id) || 0;
 
@@ -1224,6 +1258,7 @@ const server = Bun.serve({
         return Response.json({ ok: false, error: `Server at capacity (${MAX_CONCURRENT_RUNS} concurrent runs). Try again later.` }, { status: 429 });
       }
       triggeringRooms.add(roomId);
+      if (!hotelIntegrated) logRoom(roomId, `[trigger] Headless run (hotel integration off, room key ${HEADLESS_ROOM_ID})`);
 
       // Dual-gate validation for session_goal fields (user_team only)
       const isUserTeam = body.user_team === true;
@@ -1259,6 +1294,10 @@ const server = Bun.serve({
 
       if (userApiKey) logRoom(roomId, `[trigger] Using API key from portal user ${portalUserId}`);
       if (userMcpToken) logRoom(roomId, `[trigger] Using MCP token from portal user ${portalUserId}`);
+      if (portalUserId > 0 && !userApiKey?.trim()) {
+        triggeringRooms.delete(roomId);
+        return Response.json({ ok: false, error: "No Anthropic API key configured for this portal user. Add one in Account → Settings." }, { status: 400 });
+      }
 
       // Filter integrations to only those required by the team's skills so unrelated
       // MCP servers aren't loaded into the agent's context.
@@ -1336,14 +1375,17 @@ const server = Bun.serve({
         return voiceSay(`Team is al actief in kamer ${roomId}. Stuur een SMS met stop team om te stoppen.`);
       }
 
-      const voiceRun: RunContext = { roomId, startTime: new Date(), from: phoneUser.username, portalUserId: phoneUser.portal_user_id, child: null, timeoutHandle: null };
-      activeRuns.set(roomId, voiceRun);
-      logRoom(roomId, `[voice] Team gestart door ${phoneUser.username}`);
-
       const [userApiKey, userMcpToken] = await Promise.all([
         fetchUserAnthropicKey(phoneUser.portal_user_id),
         fetchUserMcpToken(phoneUser.portal_user_id),
       ]);
+      if (!userApiKey?.trim()) {
+        return voiceSay("No Anthropic API key in the portal. Add one in Account settings.");
+      }
+
+      const voiceRun: RunContext = { roomId, startTime: new Date(), from: phoneUser.username, portalUserId: phoneUser.portal_user_id, child: null, timeoutHandle: null };
+      activeRuns.set(roomId, voiceRun);
+      logRoom(roomId, `[voice] Team gestart door ${phoneUser.username}`);
       const config = await fetchUserTeamConfig(phoneUser.team.id);
       const voiceBotIdEntries = await Promise.all(
         config.members.map(async m => {
@@ -1411,17 +1453,24 @@ const server = Bun.serve({
           return twiml(`Team already active in room ${smsRoomId}. Send "stop" to stop it.`);
         }
 
+        const [userApiKeyPre, userMcpTokenPre, configPre] = await Promise.all([
+          fetchUserAnthropicKey(smsUser.portal_user_id),
+          fetchUserMcpToken(smsUser.portal_user_id),
+          fetchUserTeamConfig(smsUser.team!.id),
+        ]);
+        if (!userApiKeyPre?.trim()) {
+          return twiml("No Anthropic API key in the portal. Add one in Account settings.");
+        }
+
         const smsRun: RunContext = { roomId: smsRoomId, startTime: new Date(), from: smsUser.username, portalUserId: smsUser.portal_user_id, child: null, timeoutHandle: null };
         activeRuns.set(smsRoomId, smsRun);
         logRoom(smsRoomId, `[sms] Team started by ${smsUser.username}`);
 
         (async () => {
           try {
-            const [userApiKey, userMcpToken, config] = await Promise.all([
-              fetchUserAnthropicKey(smsUser.portal_user_id),
-              fetchUserMcpToken(smsUser.portal_user_id),
-              fetchUserTeamConfig(smsUser.team!.id),
-            ]);
+            const userApiKey = userApiKeyPre;
+            const userMcpToken = userMcpTokenPre;
+            const config = configPre;
             const smsBotIdEntries = await Promise.all(
               config.members.map(async m => {
                 const id = await findBotIdByName(m.bot_name, userMcpToken ?? undefined);

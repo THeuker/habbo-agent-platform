@@ -6,12 +6,14 @@ alwaysApply: true
 
 # Rebuild & Restart portal after every change
 
-After finishing **any** edit under `portal/` — frontend (`src/`, `vite.config.js`, assets) or backend (`server.js`, `package.json`) — run both steps before telling the user you are done:
+After finishing **any** edit under `portal/` — frontend (`src/`, `vite.config.js`, assets) or backend (`server.js`, `package.json`) — run both steps before telling the user you are done.
+
+**Run commands from the repository root** (the Cursor workspace root for this project — not a fixed machine path).
 
 ## Step 1 — Production build
 
 ```bash
-cd /Users/tijmendejong/Documents/projects/personal/habbo-agent-platform/portal && npm run build
+cd portal && npm run build
 ```
 
 If the build fails, fix all errors and re-run until it passes.

@@ -7,6 +7,7 @@ import { SkillChip } from './SkillChip'
 import { api } from '../utils/api'
 import { friendlyFetchError } from '../utils/fetchError'
 import { useToast } from '../ToastContext'
+import { useHotel } from '../HotelContext'
 import { can } from '../utils/permissions'
 import { parseSkillSlugs, parseSkills } from '../utils/parseSkills'
 import { useSkillsCatalog } from '../utils/useSkillsCatalog'
@@ -170,6 +171,9 @@ export function AccountView({ me, onKeyUpdated, onTokenChange }) {
   const [phoneDeleting, setPhoneDeleting] = useState(false)
   const [phoneMsg, setPhoneMsg] = useState(null) // { type: 'success'|'error', text }
 
+  const [defaultTeamState, setDefaultTeamState] = useState({ loading: true, teamId: null, teams: [] })
+  const [defaultTeamSaving, setDefaultTeamSaving] = useState(false)
+
   const canUseMcpTokens = me && ['pro', 'enterprise'].includes(me.ai_tier)
 
   // MCP tokens + Habbo MCP connection status — Pro+ (simple UI); full diagnostics for developers
@@ -281,6 +285,28 @@ export function AccountView({ me, onKeyUpdated, onTokenChange }) {
       setPhoneInput(d.phone_number ?? '')
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    api('/api/account/default-team')
+      .then(d => setDefaultTeamState({ loading: false, teamId: d.default_user_team_id ?? null, teams: d.teams || [] }))
+      .catch(() => setDefaultTeamState(s => ({ ...s, loading: false })))
+  }, [])
+
+  async function handleDefaultTeamChange(teamIdVal) {
+    setDefaultTeamSaving(true)
+    try {
+      const d = await api('/api/account/default-team', {
+        method: 'PATCH',
+        body: JSON.stringify({ default_user_team_id: teamIdVal }),
+      })
+      setDefaultTeamState(prev => ({ ...prev, teamId: d.default_user_team_id ?? null }))
+      onKeyUpdated?.()
+    } catch (e) {
+      setPhoneMsg({ type: 'error', text: e.message || 'Could not update default team' })
+    } finally {
+      setDefaultTeamSaving(false)
+    }
+  }
 
   async function handleSavePhone() {
     setPhoneMsg(null)
@@ -480,6 +506,30 @@ export function AccountView({ me, onKeyUpdated, onTokenChange }) {
                   className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                   {phoneSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
                 </button>
+              </div>
+              <div className="border-t border-border pt-4 space-y-2">
+                <p className="text-xs font-medium text-foreground">Default team for SMS &amp; voice</p>
+                <p className="text-[11px] text-muted-foreground">
+                  When you text or call in, this team&apos;s config is used first. The first team you fork is set automatically; change it here anytime.
+                </p>
+                {defaultTeamState.loading ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading teams…</div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <select
+                      value={defaultTeamState.teamId ?? ''}
+                      onChange={e => handleDefaultTeamChange(e.target.value === '' ? null : Number(e.target.value))}
+                      disabled={defaultTeamSaving || defaultTeamState.teams.length === 0}
+                      className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+                    >
+                      <option value="">— No default (use first team) —</option>
+                      {defaultTeamState.teams.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    {defaultTeamSaving && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground shrink-0" />}
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -1858,6 +1908,7 @@ function IntegratedView({ me, onAfterTrigger, liveBots = [], mcpTokenVersion = 0
                 key={persona.id}
                 persona={persona}
                 bots={bots}
+                personas={personas}
                 onEdit={canManagePersonas ? () => setPersonaPage({ persona }) : undefined}
                 onDelete={canManagePersonas ? () => deletePersona(persona) : undefined}
                 onLinkBot={canLinkBot ? linkPersonaBot : undefined}
@@ -2049,7 +2100,6 @@ function RunReportRow({ report, isOpen, onToggle }) {
 // Must match the server-side INTEGRATION_KEYWORDS map in portal/server.js
 const INTEGRATION_KEYWORDS = {
   notion:    ['notion'],
-  plane:     ['plane.so', 'plane mcp', 'planemcp'],
   linear:    ['linear.app', 'linear mcp'],
   atlassian: ['atlassian', 'jira', 'confluence'],
   airtable:  ['airtable'],
@@ -2084,6 +2134,7 @@ function detectRequiredIntegrations(team, members) {
 }
 
 function IntegratedTeamCard({ team, canManage = false, bots = [], liveBots = [], rooms = [], deploying, hasApiKey = true, hasMcpToken = true, integrations = [], onDeploy, onRoomChange, onEdit, onDelete }) {
+  const { habboConnected } = useHotel()
   const [members, setMembers] = useState(team.members || null)
   const [selectedRoomId, setSelectedRoomId] = useState(team.default_room_id || rooms[0]?.id || null)
 
@@ -2116,17 +2167,17 @@ function IntegratedTeamCard({ team, canManage = false, bots = [], liveBots = [],
     return `${conflicts.map(c => c.name).join(', ')} ${conflicts.length === 1 ? 'is' : 'are'} active in room ${conflicts[0].room_id}`
   }, [members, memberBotNames, bots, selectedRoomId])
 
-  const hasUnlinked = useMemo(() => members !== null && members.some(m => !m.bot_name?.trim()), [members])
+  const hasUnlinked = useMemo(() => habboConnected && members !== null && members.some(m => !m.bot_name?.trim()), [habboConnected, members])
   const noKey = !hasApiKey
   const noMcpToken = !hasMcpToken
 
   // Members whose bot_name is set but no longer exists in the hotel bot list
   const missingBots = useMemo(() => {
-    if (!members || !bots) return []
+    if (!habboConnected || !members || !bots) return []
     return members
       .filter(m => m.bot_name?.trim() && !bots.some(b => b.name?.toLowerCase() === m.bot_name.toLowerCase()))
       .map(m => m.bot_name)
-  }, [members, bots])
+  }, [habboConnected, members, bots])
 
   // Detect which integrations the team tasks/capabilities require and cross-check
   // against the user's connected integrations (by name substring match).
@@ -2175,6 +2226,13 @@ function IntegratedTeamCard({ team, canManage = false, bots = [], liveBots = [],
             <p className={`font-semibold text-sm leading-tight transition-colors ${onEdit ? 'text-foreground group-hover/header:text-primary' : 'text-foreground'}`}>
               {team.name}
             </p>
+            {team.source_team_id != null && team.marketplace_install_kind && (
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Forked from {team.source_marketplace_team_name ? `"${team.source_marketplace_team_name}"` : 'marketplace'}
+                {' · '}
+                {team.marketplace_install_kind === 'full' ? 'full team' : 'single-agent team'}
+              </p>
+            )}
             {team.description && (
               <p className="text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">{team.description}</p>
             )}
@@ -2230,28 +2288,31 @@ function IntegratedTeamCard({ team, canManage = false, bots = [], liveBots = [],
           )}
         </div>
 
-        {/* Footer: room + deploy */}
+        {/* Footer: room (hotel only) + deploy */}
         <div className="flex items-center gap-2 pt-3 border-t border-border">
-          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <span className="text-xs text-muted-foreground flex-shrink-0">Room</span>
-            {rooms.length > 0 ? (
-              <select
-                value={selectedRoomId ?? ''}
-                onChange={e => handleRoomChange(Number(e.target.value))}
-                className="flex-1 min-w-0 bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-              >
-                {rooms.map(r => <option key={r.id} value={r.id}>#{r.id} — {r.name}</option>)}
-              </select>
-            ) : (
-              <input
-                type="number" min="1"
-                value={selectedRoomId ?? ''}
-                onChange={e => handleRoomChange(Number(e.target.value))}
-                placeholder="Room ID"
-                className="w-24 bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-            )}
-          </div>
+          {habboConnected && (
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <span className="text-xs text-muted-foreground flex-shrink-0">Room</span>
+              {rooms.length > 0 ? (
+                <select
+                  value={selectedRoomId ?? ''}
+                  onChange={e => handleRoomChange(Number(e.target.value))}
+                  className="flex-1 min-w-0 bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {rooms.map(r => <option key={r.id} value={r.id}>#{r.id} — {r.name}</option>)}
+                </select>
+              ) : (
+                <input
+                  type="number" min="1"
+                  value={selectedRoomId ?? ''}
+                  onChange={e => handleRoomChange(Number(e.target.value))}
+                  placeholder="Room ID"
+                  className="w-24 bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              )}
+            </div>
+          )}
+          {!habboConnected && <div className="flex-1" />}
           <button
             onClick={() => onDeploy(selectedRoomId)}
             disabled={deploying || blocked}
@@ -2302,6 +2363,7 @@ const VERBOSITY_LABELS = [
 ]
 
 function IntegratedTeamForm({ team, personas, rooms = [], isDev, onSave, onCancel, onViewPersona }) {
+  const { habboConnected } = useHotel()
   const [name, setName] = useState(team?.name || '')
   const [description, setDescription] = useState(team?.description || '')
   const [orchestratorPrompt, setOrchestratorPrompt] = useState(team?.orchestrator_prompt || '')
@@ -2516,34 +2578,36 @@ function IntegratedTeamForm({ team, personas, rooms = [], isDev, onSave, onCance
               </p>
             </div>
 
-            {/* Default room */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-foreground">
-                Default room
-                <span className="ml-1.5 text-muted-foreground font-normal">— used when triggered by phone or SMS</span>
-              </label>
-              {rooms.length > 0 ? (
-                <select
-                  value={defaultRoomId ?? ''}
-                  onChange={e => setDefaultRoomId(Number(e.target.value))}
-                  className="w-full bg-muted/40 border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  <option value="">— pick a room —</option>
-                  {rooms.map(r => (
-                    <option key={r.id} value={r.id}>#{r.id} — {r.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="number"
-                  min="1"
-                  value={defaultRoomId ?? ''}
-                  onChange={e => setDefaultRoomId(Number(e.target.value) || '')}
-                  placeholder="Room ID (e.g. 201)"
-                  className="w-full bg-muted/40 border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-              )}
-            </div>
+            {/* Default room — hotel integration only */}
+            {habboConnected && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-foreground">
+                  Default room
+                  <span className="ml-1.5 text-muted-foreground font-normal">— used when triggered by phone or SMS</span>
+                </label>
+                {rooms.length > 0 ? (
+                  <select
+                    value={defaultRoomId ?? ''}
+                    onChange={e => setDefaultRoomId(Number(e.target.value))}
+                    className="w-full bg-muted/40 border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="">— pick a room —</option>
+                    {rooms.map(r => (
+                      <option key={r.id} value={r.id}>#{r.id} — {r.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    min="1"
+                    value={defaultRoomId ?? ''}
+                    onChange={e => setDefaultRoomId(Number(e.target.value) || '')}
+                    placeholder="Room ID (e.g. 201)"
+                    className="w-full bg-muted/40 border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -2889,10 +2953,24 @@ function SkillDetailModal({ slug, onClose }) {
 
 // ── Persona Card ──────────────────────────────────────────────────────────
 
-function PersonaCard({ persona, bots = [], onEdit, onDelete, onLinkBot }) {
+function PersonaCard({ persona, bots = [], personas = [], onEdit, onDelete, onLinkBot }) {
+  const { habboConnected } = useHotel()
   const { showToast } = useToast()
   const { catalog } = useSkillsCatalog()
-  const figure = persona.figure || bots.find(b => b.name === persona.bot_name)?.figure || ''
+  const linkedBot = persona.bot_name
+    ? bots.find(b => b.name?.toLowerCase() === persona.bot_name.toLowerCase())
+    : null
+  const botMissing = !!persona.bot_name && !linkedBot
+  const figure = persona.figure || linkedBot?.figure || ''
+
+  // Bot names already claimed by OTHER personas — exclude from the dropdown.
+  const takenBotNames = useMemo(() =>
+    new Set(
+      personas
+        .filter(p => p.id !== persona.id && p.bot_name)
+        .map(p => p.bot_name.toLowerCase())
+    ),
+  [personas, persona.id])
 
   const [linking, setLinking] = useState(false)
   const [selectedBot, setSelectedBot] = useState(persona.bot_name || '')
@@ -2945,7 +3023,7 @@ function PersonaCard({ persona, bots = [], onEdit, onDelete, onLinkBot }) {
         <div className="flex flex-col items-center justify-start pt-4 px-4 pb-4 bg-secondary/30 border-r border-border flex-shrink-0 w-24">
           <HabboFigure figure={figure} figureType={persona.figure_type} size="xl" animate={true} />
           {persona.bot_name && !linking && (
-            <span className="mt-2 text-[10px] text-center text-info font-medium leading-tight truncate w-full text-center">
+            <span className={`mt-2 text-[10px] text-center font-medium leading-tight truncate w-full text-center ${botMissing ? 'text-destructive/80' : 'text-info'}`}>
               {persona.bot_name}
             </span>
           )}
@@ -2960,6 +3038,9 @@ function PersonaCard({ persona, bots = [], onEdit, onDelete, onLinkBot }) {
               <p className={`font-semibold text-sm truncate transition-colors ${onEdit ? 'group-hover/pcard:text-primary' : ''} text-foreground`}>
                 {persona.name}
               </p>
+              {persona.forked_from_template_name && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">Forked from marketplace · {persona.forked_from_template_name}</p>
+              )}
               {persona.role && (
                 <span className="inline-flex items-center gap-1 text-[11px] bg-primary/10 text-primary border border-primary/20 rounded-full px-2 py-0.5 mt-1">
                   {persona.role}
@@ -3010,8 +3091,8 @@ function PersonaCard({ persona, bots = [], onEdit, onDelete, onLinkBot }) {
             </div>
           )}
 
-          {/* Bot link footer — only shown when caller has personas.link_bot permission */}
-          <div className="mt-auto pt-2 border-t border-border flex items-center gap-2" onClick={e => e.stopPropagation()}>
+          {/* Bot link footer — only when hotel integration is active */}
+          {habboConnected && <div className="mt-auto pt-2 border-t border-border flex items-center gap-2" onClick={e => e.stopPropagation()}>
             {onLinkBot && linking ? (
               <>
                 <Bot className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
@@ -3022,9 +3103,14 @@ function PersonaCard({ persona, bots = [], onEdit, onDelete, onLinkBot }) {
                   autoFocus
                 >
                   <option value="">— No bot —</option>
-                  {bots.map(b => (
-                    <option key={b.id ?? b.name} value={b.name}>{b.name}</option>
-                  ))}
+                  {bots.map(b => {
+                    const taken = takenBotNames.has(b.name?.toLowerCase())
+                    return (
+                      <option key={b.id ?? b.name} value={b.name} disabled={taken}>
+                        {b.name}{taken ? ' (linked to another agent)' : ''}
+                      </option>
+                    )
+                  })}
                 </select>
                 <button
                   onClick={handleLinkBot}
@@ -3044,9 +3130,15 @@ function PersonaCard({ persona, bots = [], onEdit, onDelete, onLinkBot }) {
             ) : (
               <>
                 {persona.bot_name ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs bg-info/10 text-info border border-info/20 rounded-full px-2.5 py-0.5">
-                    <Bot className="w-3 h-3" /> {persona.bot_name}
-                  </span>
+                  botMissing ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs bg-destructive/10 text-destructive border border-destructive/20 rounded-full px-2.5 py-0.5" title="This bot no longer exists — link a new one">
+                      <AlertTriangle className="w-3 h-3" /> {persona.bot_name} not found
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs bg-info/10 text-info border border-info/20 rounded-full px-2.5 py-0.5">
+                      <Bot className="w-3 h-3" /> {persona.bot_name}
+                    </span>
+                  )
                 ) : (
                   <span className="text-xs text-muted-foreground/50 italic">No bot linked</span>
                 )}
@@ -3061,7 +3153,7 @@ function PersonaCard({ persona, bots = [], onEdit, onDelete, onLinkBot }) {
                 )}
               </>
             )}
-          </div>
+          </div>}
         </div>
       </div>
     </div>
@@ -3199,6 +3291,7 @@ function SkillBrowser({ selectedSlugs, onChange }) {
 // ── Persona Editor ────────────────────────────────────────────────────────
 
 function PersonaEditor({ persona, bots, onSave, onCancel }) {
+  const { habboConnected } = useHotel()
   const [name, setName] = useState(persona?.name || '')
   const [role, setRole] = useState(persona?.role || '')
   const [description, setDescription] = useState(persona?.description || '')
@@ -3302,36 +3395,41 @@ function PersonaEditor({ persona, bots, onSave, onCancel }) {
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-foreground">Bot</label>
-              <select
-                value={botName}
-                onChange={e => setBotName(e.target.value)}
-                className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-              >
-                <option value="">Select bot…</option>
-                {bots.map(b => (
-                  <option key={b.id ?? b.name} value={b.name}>{b.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-foreground">Habbo Figure</label>
-              <input
-                value={figure}
-                onChange={e => setFigure(e.target.value)}
-                placeholder="hr-115-42.hd-180-1.ch-…"
-                className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
-              />
-            </div>
-          </div>
+          {/* Habbo Hotel section — only shown when hotel integration is active */}
+          {habboConnected && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-foreground">Bot</label>
+                  <select
+                    value={botName}
+                    onChange={e => setBotName(e.target.value)}
+                    className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    <option value="">Select bot…</option>
+                    {bots.map(b => (
+                      <option key={b.id ?? b.name} value={b.name}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-foreground">Habbo Figure</label>
+                  <input
+                    value={figure}
+                    onChange={e => setFigure(e.target.value)}
+                    placeholder="hr-115-42.hd-180-1.ch-…"
+                    className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+                  />
+                </div>
+              </div>
 
-          {figure && (
-            <div className="flex items-center gap-3">
-              <HabboFigure figure={figure} size="md" animate={true} />
-              <p className="text-xs text-muted-foreground">Figure preview</p>
-            </div>
+              {figure && (
+                <div className="flex items-center gap-3">
+                  <HabboFigure figure={figure} size="md" animate={true} />
+                  <p className="text-xs text-muted-foreground">Figure preview</p>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

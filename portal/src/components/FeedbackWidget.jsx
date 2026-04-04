@@ -17,9 +17,9 @@ const TYPE_OPTIONS = [
 
 const PAGE_OPTIONS = [
   { label: 'Home', value: 'home' },
-  { label: 'My Agents', value: 'agents' },
+  { label: 'Teams', value: 'agents' },
   { label: 'Marketplace', value: 'marketplace' },
-  { label: 'Bots', value: 'bots' },
+  { label: 'Reports', value: 'reports' },
   { label: 'Integrations', value: 'integrations' },
   { label: 'Settings', value: 'account' },
   { label: 'Other', value: 'other' },
